@@ -1,0 +1,30 @@
+# Environment files
+.env
+.env.backup
+.env.production
+.env.local
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build artifacts
+dist/
+frontend/dist/
+backend/storage/logs/*.log
+backend/storage/framework/cache/*
+backend/storage/framework/sessions/*
+backend/storage/framework/views/*
+backend/bootstrap/cache/*.php
+
+# Docker Volumes
+postgres_data/
+redis_data/
+
+# IDE
+.idea/
+.vscode/

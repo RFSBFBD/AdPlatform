@@ -1,0 +1,123 @@
+services:
+  # Laravel PHP-FPM API Service
+  backend:
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    container_name: ad_platform_backend
+    restart: unless-stopped
+    working_dir: /var/www/backend
+    volumes:
+      - ./backend:/var/www/backend
+    networks:
+      - app-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Nginx Web Server / Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: ad_platform_nginx
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./backend:/var/www/backend:ro
+    networks:
+      - app-network
+    depends_on:
+      - backend
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: ad_platform_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-advertising_platform}
+      POSTGRES_USER: ${DB_USERNAME:-ad_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ad_password_secret_local}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-ad_user} -d ${DB_DATABASE:-advertising_platform}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  # Redis Cache and Queue Broker
+  redis:
+    image: redis:7-alpine
+    container_name: ad_platform_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  # Laravel Queue Worker
+  queue-worker:
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    container_name: ad_platform_queue
+    restart: unless-stopped
+    working_dir: /var/www/backend
+    command: php artisan queue:work --sleep=3 --tries=3 --timeout=90
+    volumes:
+      - ./backend:/var/www/backend
+    networks:
+      - app-network
+    depends_on:
+      backend:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Laravel Task Scheduler Process
+  scheduler:
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    container_name: ad_platform_scheduler
+    restart: unless-stopped
+    working_dir: /var/www/backend
+    command: php artisan schedule:work
+    volumes:
+      - ./backend:/var/www/backend
+    networks:
+      - app-network
+    depends_on:
+      backend:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge
