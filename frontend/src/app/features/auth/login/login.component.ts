@@ -4,30 +4,32 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../../../core/services/auth.service';
 import { ButtonComponent } from '../../../shared/components/button/button.component';
+import { BrandLogoComponent } from '../../../shared/components/brand-logo/brand-logo.component';
+import { IconComponent } from '../../../shared/components/icon/icon.component';
 
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, ButtonComponent],
+  imports: [CommonModule, ReactiveFormsModule, ButtonComponent, BrandLogoComponent, IconComponent],
   template: `
     <div class="login-wrapper">
       <div class="login-card">
         <div class="login-header">
-          <div class="brand-badge">AdPlatform</div>
-          <h2 class="title">Sign in to your account</h2>
-          <p class="subtitle">Enter your official credentials to access the platform.</p>
+          <app-brand-logo [size]="52"></app-brand-logo>
+          <h2 class="title">Sign in to AdPlatform</h2>
+          <p class="subtitle">Unified cross-channel advertising analytics and AI intelligence.</p>
         </div>
 
         @if (errorMessage()) {
           <div class="alert-error" role="alert">
-            <span class="alert-icon">⚠️</span>
+            <app-icon name="alert" [size]="16"></app-icon>
             <span>{{ errorMessage() }}</span>
           </div>
         }
 
         <form [formGroup]="loginForm" (ngSubmit)="onSubmit()" class="login-form">
           <div class="form-group">
-            <label for="email" class="form-label">Email Address</label>
+            <label for="email" class="form-label">Work Email</label>
             <input
               id="email"
               type="email"
@@ -46,15 +48,25 @@ import { ButtonComponent } from '../../../shared/components/button/button.compon
             <div class="label-row">
               <label for="password" class="form-label">Password</label>
             </div>
-            <input
-              id="password"
-              type="password"
-              formControlName="password"
-              class="form-input"
-              placeholder="••••••••••••"
-              autocomplete="current-password"
-              [class.invalid]="isFieldInvalid('password')"
-            />
+            <div class="password-wrapper">
+              <input
+                id="password"
+                [type]="showPassword() ? 'text' : 'password'"
+                formControlName="password"
+                class="form-input password-input"
+                placeholder="••••••••••••"
+                autocomplete="current-password"
+                [class.invalid]="isFieldInvalid('password')"
+              />
+              <button 
+                type="button" 
+                class="pwd-toggle" 
+                (click)="showPassword.update(v => !v)"
+                title="Toggle password visibility"
+              >
+                <app-icon [name]="showPassword() ? 'eye-off' : 'eye'" [size]="16"></app-icon>
+              </button>
+            </div>
             @if (isFieldInvalid('password')) {
               <span class="field-error">Password is required.</span>
             }
@@ -68,13 +80,16 @@ import { ButtonComponent } from '../../../shared/components/button/button.compon
               [loading]="isLoading()"
               [disabled]="loginForm.invalid"
             >
-              Sign In
+              <span>Sign In to Dashboard</span>
             </app-button>
           </div>
         </form>
 
         <div class="login-footer">
-          <span class="security-notice">🔒 Secured with first-party Laravel Sanctum tokens</span>
+          <span class="security-notice">
+            <app-icon name="key" [size]="13"></app-icon>
+            <span>Secured with encrypted first-party tokens</span>
+          </span>
         </div>
       </div>
     </div>
@@ -92,8 +107,8 @@ import { ButtonComponent } from '../../../shared/components/button/button.compon
     .login-card {
       background-color: var(--bg-surface);
       border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-lg);
-      padding: 2.5rem 2rem;
+      border-radius: var(--radius-xl);
+      padding: 2.5rem 2.25rem;
       width: 100%;
       max-width: 440px;
       box-shadow: var(--shadow-lg);
@@ -104,19 +119,8 @@ import { ButtonComponent } from '../../../shared/components/button/button.compon
       flex-direction: column;
       align-items: center;
       text-align: center;
+      gap: 0.85rem;
       margin-bottom: 2rem;
-    }
-
-    .brand-badge {
-      font-weight: 700;
-      font-size: 0.8125rem;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      padding: 0.25rem 0.75rem;
-      background-color: var(--primary-light);
-      color: var(--primary);
-      border-radius: var(--radius-full);
-      margin-bottom: 1rem;
     }
 
     .title {
@@ -129,7 +133,7 @@ import { ButtonComponent } from '../../../shared/components/button/button.compon
     .subtitle {
       font-size: 0.875rem;
       color: var(--text-muted);
-      margin-top: 0.375rem;
+      line-height: 1.4;
     }
 
     .alert-error {
@@ -157,30 +161,29 @@ import { ButtonComponent } from '../../../shared/components/button/button.compon
       gap: 0.375rem;
     }
 
-    .form-label {
-      font-size: 0.875rem;
-      font-weight: 500;
-      color: var(--text-main);
+    .password-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
     }
 
-    .form-input {
-      padding: 0.625rem 0.875rem;
-      border: 1px solid var(--border-strong);
-      border-radius: var(--radius-md);
-      background-color: var(--bg-app);
+    .password-input {
+      padding-right: 2.5rem;
+    }
+
+    .pwd-toggle {
+      position: absolute;
+      right: 0.75rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.25rem;
+      cursor: pointer;
+    }
+
+    .pwd-toggle:hover {
       color: var(--text-main);
-      font-size: 0.9375rem;
-      transition: all var(--transition-fast);
-
-      &:focus {
-        outline: none;
-        border-color: var(--primary);
-        box-shadow: 0 0 0 3px var(--primary-ring);
-      }
-
-      &.invalid {
-        border-color: var(--danger);
-      }
     }
 
     .field-error {
@@ -200,6 +203,9 @@ import { ButtonComponent } from '../../../shared/components/button/button.compon
     }
 
     .security-notice {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
       font-size: 0.75rem;
       color: var(--text-subtle);
     }
@@ -212,6 +218,7 @@ export class LoginComponent {
 
   readonly isLoading = signal<boolean>(false);
   readonly errorMessage = signal<string | null>(null);
+  readonly showPassword = signal<boolean>(false);
 
   readonly loginForm = this.fb.nonNullable.group({
     email: ['admin@adplatform.local', [Validators.required, Validators.email]],

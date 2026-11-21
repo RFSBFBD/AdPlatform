@@ -86,6 +86,22 @@ class SyncEngineTest extends TestCase
                         'daily_budget' => 50.00,
                         'lifetime_budget' => null,
                         'currency' => 'USD',
+                        'ad_sets' => [
+                            [
+                                'external_ad_set_id' => 'adset_111',
+                                'name' => 'Lookalike Audience 1%',
+                                'status' => 'ACTIVE',
+                                'daily_budget' => 25.00,
+                                'ads' => [
+                                    [
+                                        'external_ad_id' => 'ad_222',
+                                        'name' => 'Summer Video 15s',
+                                        'status' => 'ACTIVE',
+                                        'headline' => 'Get 30% Off Today',
+                                    ],
+                                ],
+                            ],
+                        ],
                     ],
                 ],
             ]);
@@ -152,6 +168,17 @@ class SyncEngineTest extends TestCase
         // Verify Raw Audit Payload was stored
         $rawCount = RawProviderPayload::where('connected_ad_account_id', $this->account->id)->count();
         $this->assertGreaterThanOrEqual(2, $rawCount);
+
+        // Verify Ad Sets and Ads Ingested (INT-002)
+        $adSet = \App\Models\AdSet::where('external_ad_set_id', 'adset_111')->first();
+        $this->assertNotNull($adSet);
+        $this->assertEquals($campaign->id, $adSet->campaign_id);
+        $this->assertEquals('Lookalike Audience 1%', $adSet->name);
+
+        $ad = \App\Models\Ad::where('external_ad_id', 'ad_222')->first();
+        $this->assertNotNull($ad);
+        $this->assertEquals($adSet->id, $ad->ad_set_id);
+        $this->assertEquals('Get 30% Off Today', $ad->headline);
     }
 
     public function test_sync_engine_prevents_concurrent_runs_with_redis_lock(): void
@@ -259,5 +286,87 @@ class SyncEngineTest extends TestCase
                     '*' => ['id', 'sync_type', 'status', 'records_processed'],
                 ],
             ]);
+    }
+
+    public function test_google_and_tiktok_hierarchical_sync_persists_ad_groups_and_ads(): void
+    {
+        $googleAcc = ConnectedAdAccount::create([
+            'user_id' => $this->user->id,
+            'provider' => 'google',
+            'external_account_id' => 'google_hier_123',
+            'account_name' => 'Google Ads Hierarchical Test',
+            'currency' => 'USD',
+            'timezone' => 'America/New_York',
+            'access_token' => 'dummy_token',
+            'status' => 'active',
+        ]);
+
+        $mockAdapter = Mockery::mock(AdvertisingProviderInterface::class);
+        $mockAdapter->shouldReceive('fetchCampaigns')
+            ->once()
+            ->andReturn([
+                'endpoint' => '/customers/google_hier_123/googleAds:searchStream',
+                'raw' => [],
+                'campaigns' => [
+                    [
+                        'external_campaign_id' => 'g_camp_101',
+                        'name' => 'Google Search Campaign',
+                        'status' => 'ENABLED',
+                        'objective' => 'SEARCH',
+                        'currency' => 'USD',
+                        'ad_sets' => [
+                            [
+                                'external_ad_set_id' => 'g_ag_201',
+                                'name' => 'High Intent Keywords Group',
+                                'status' => 'ENABLED',
+                                'ads' => [
+                                    [
+                                        'external_ad_id' => 'g_ad_301',
+                                        'name' => 'Responsive Search Ad #1',
+                                        'status' => 'ENABLED',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ]);
+
+        $mockAdapter->shouldReceive('fetchInsights')
+            ->once()
+            ->andReturn([
+                'endpoint' => '/insights',
+                'raw' => [],
+                'metrics' => [
+                    [
+                        'external_campaign_id' => 'g_camp_101',
+                        'date' => '2026-11-18',
+                        'spend' => 75.00,
+                        'impressions' => 1500,
+                        'clicks' => 80,
+                        'conversions' => 5.0,
+                        'conversion_value' => 250.0,
+                    ],
+                ],
+            ]);
+
+        $mockOAuth = Mockery::mock(OAuthManager::class);
+        $mockOAuth->shouldReceive('getAdapter')->with('google')->andReturn($mockAdapter);
+
+        $engine = new AdDataSyncEngine($mockOAuth);
+        $syncRun = $engine->syncAccount($googleAcc, 'initial', '2026-11-18', '2026-11-18');
+
+        $this->assertEquals('completed', $syncRun->status);
+
+        // Verify AdSet / AdGroup persisted
+        $adGroup = \App\Models\AdSet::where('external_ad_set_id', 'g_ag_201')->first();
+        $this->assertNotNull($adGroup);
+        $this->assertEquals('High Intent Keywords Group', $adGroup->name);
+
+        // Verify Ad persisted
+        $ad = \App\Models\Ad::where('external_ad_id', 'g_ad_301')->first();
+        $this->assertNotNull($ad);
+        $this->assertEquals('Responsive Search Ad #1', $ad->name);
+        $this->assertEquals($adGroup->id, $ad->ad_set_id);
     }
 }

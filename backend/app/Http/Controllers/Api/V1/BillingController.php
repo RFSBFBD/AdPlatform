@@ -18,8 +18,12 @@ class BillingController extends Controller
      */
     public function summary(Request $request): JsonResponse
     {
-        $accounts = ConnectedAdAccount::with('billingProfile')->get();
+        // Tenancy / User Scoping (SEC-001)
+        $accounts = ConnectedAdAccount::with('billingProfile')
+            ->where('user_id', $request->user()->id)
+            ->get();
 
+        $accountIds = $accounts->pluck('id');
         $totalOutstanding = 0.00;
         $accountProfiles = [];
 
@@ -40,15 +44,18 @@ class BillingController extends Controller
             ];
         }
 
-        // Calculate invoices billed this current calendar month
+        // Calculate invoices billed this current calendar month scoped to user's accounts
         $startOfMonth = Carbon::now()->startOfMonth()->format('Y-m-d');
         $endOfMonth = Carbon::now()->endOfMonth()->format('Y-m-d');
 
-        $invoicedThisMonth = (float) BillingInvoice::whereBetween('invoice_date', [$startOfMonth, $endOfMonth])
+        $invoicedThisMonth = (float) BillingInvoice::whereIn('connected_ad_account_id', $accountIds)
+            ->whereBetween('invoice_date', [$startOfMonth, $endOfMonth])
             ->where('status', 'PAID')
             ->sum('total_amount');
 
-        $invoicesCount = BillingInvoice::whereBetween('invoice_date', [$startOfMonth, $endOfMonth])->count();
+        $invoicesCount = BillingInvoice::whereIn('connected_ad_account_id', $accountIds)
+            ->whereBetween('invoice_date', [$startOfMonth, $endOfMonth])
+            ->count();
 
         return response()->json([
             'summary' => [
@@ -72,7 +79,11 @@ class BillingController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
+        // Tenancy / User Scoping (SEC-001)
+        $userAccountIds = ConnectedAdAccount::where('user_id', $request->user()->id)->pluck('id');
+
         $query = BillingInvoice::with('connectedAdAccount:id,account_name,provider,currency')
+            ->whereIn('connected_ad_account_id', $userAccountIds)
             ->orderBy('invoice_date', 'desc');
 
         if (!empty($validated['status'])) {

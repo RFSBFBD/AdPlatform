@@ -115,4 +115,24 @@ class LookerStudioTest extends TestCase
         $this->assertEquals('USD', $firstRow[4]);
         $this->assertEquals(450.00, $firstRow[5]); // spend
     }
+
+    public function test_multi_tenant_isolation_prevents_user_from_seeing_another_users_metrics(): void
+    {
+        $otherUser = User::firstOrCreate(
+            ['email' => 'other_looker_user@example.com'],
+            ['name' => 'Other Looker User', 'password' => bcrypt('password123'), 'status' => 'active']
+        );
+
+        // User A (owner) should see 1 row
+        $responseA = $this->actingAs($this->user, 'sanctum')
+            ->getJson('/api/v1/reporting/looker-studio?start_date=2026-11-01&end_date=2026-11-20');
+        $responseA->assertStatus(200);
+        $this->assertNotEmpty($responseA->json('rows'));
+
+        // User B (non-owner) must NOT see User A's rows
+        $responseB = $this->actingAs($otherUser, 'sanctum')
+            ->getJson('/api/v1/reporting/looker-studio?start_date=2026-11-01&end_date=2026-11-20');
+        $responseB->assertStatus(200);
+        $this->assertEmpty($responseB->json('rows'));
+    }
 }

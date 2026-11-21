@@ -52,6 +52,8 @@ class AiConfig extends Model
             'api_key_masked' => $maskedKey,
             'monthly_token_limit' => $this->monthly_token_limit,
             'current_month_tokens' => $this->current_month_tokens,
+            'base_url' => $this->metadata['base_url'] ?? null,
+            'metadata' => $this->metadata,
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];
     }

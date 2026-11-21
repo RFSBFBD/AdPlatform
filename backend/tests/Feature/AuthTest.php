@@ -127,4 +127,32 @@ class AuthTest extends TestCase
             'action' => 'user.invited',
         ]);
     }
+
+    public function test_owner_can_directly_create_user_with_password(): void
+    {
+        $owner = User::where('email', 'admin@adplatform.local')->first();
+        $token = $owner->createToken('owner_token')->plainTextToken;
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+                         ->postJson('/api/v1/users', [
+                             'name' => 'Direct Employee',
+                             'email' => 'employee@company.local',
+                             'password' => 'EmployeePass2026!',
+                             'role' => 'Analyst',
+                         ]);
+
+        $response->assertStatus(201)
+                 ->assertJson([
+                     'success' => true,
+                     'data' => [
+                         'name' => 'Direct Employee',
+                         'email' => 'employee@company.local',
+                     ],
+                 ]);
+
+        $this->assertDatabaseHas('users', [
+            'email' => 'employee@company.local',
+            'name' => 'Direct Employee',
+        ]);
+    }
 }

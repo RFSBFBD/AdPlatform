@@ -27,12 +27,8 @@ export const routes: Routes = [
         loadComponent: () => import('./features/campaigns/campaigns.component').then(m => m.CampaignsFeatureComponent)
       },
       {
-        path: 'accounts',
-        loadComponent: () => import('./features/accounts/accounts.component').then(m => m.AccountsFeatureComponent)
-      },
-      {
-        path: 'billing',
-        loadComponent: () => import('./features/billing/billing.component').then(m => m.BillingFeatureComponent)
+        path: 'operations-research',
+        loadComponent: () => import('./features/operations-research/operations-research.component').then(m => m.OperationsResearchComponent)
       },
       {
         path: 'ai-center',

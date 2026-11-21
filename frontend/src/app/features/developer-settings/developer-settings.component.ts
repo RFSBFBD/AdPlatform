@@ -4,6 +4,7 @@ import { HttpClient } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { ButtonComponent } from '../../shared/components/button/button.component';
 import { BadgeComponent } from '../../shared/components/badge/badge.component';
+import { IconComponent } from '../../shared/components/icon/icon.component';
 
 export interface ProviderConfigDto {
   id?: number;
@@ -24,13 +25,15 @@ export interface ProviderConfigDto {
 @Component({
   selector: 'app-developer-settings-feature',
   standalone: true,
-  imports: [CommonModule, FormsModule, ButtonComponent, BadgeComponent],
+  imports: [CommonModule, FormsModule, ButtonComponent, BadgeComponent, IconComponent],
   template: `
     <div class="settings-page">
       <div class="page-header">
         <div>
-          <h2 class="title">Developer API Settings Center</h2>
-          <p class="subtitle">Securely configure official provider developer credentials. Secrets are encrypted at rest.</p>
+          <h2 class="title">Developer API Hub & Connection Center</h2>
+          <p class="subtitle">
+            Configure official social media & advertising developer credentials in one unified place. Test API handshakes with live status verification.
+          </p>
         </div>
       </div>
 
@@ -44,18 +47,24 @@ export interface ProviderConfigDto {
         <!-- Meta Ads Dev Config -->
         <div class="config-card">
           <div class="card-header">
-            <div>
-              <h3 class="card-title">Meta Marketing API Credentials</h3>
-              <p class="card-desc">App ID and App Secret from Meta for Developers portal.</p>
+            <div class="card-title-group">
+              <div class="platform-icon">
+                <app-icon name="meta" [size]="24"></app-icon>
+              </div>
+              <div>
+                <h3 class="card-title">Meta Marketing API Credentials</h3>
+                <p class="card-desc">Facebook & Instagram Ads developer app credentials.</p>
+              </div>
             </div>
             <app-badge [variant]="getBadgeVariant(metaConfig.test_status)">
-              {{ metaConfig.test_status }}
+              {{ metaConfig.test_status | uppercase }}
             </app-badge>
           </div>
 
           <div class="form-group">
-            <label class="form-label">App ID</label>
+            <label class="form-label" for="metaAppId">Meta App ID</label>
             <input 
+              id="metaAppId"
               type="text" 
               class="form-input" 
               [(ngModel)]="metaConfig.app_id" 
@@ -64,18 +73,24 @@ export interface ProviderConfigDto {
           </div>
 
           <div class="form-group">
-            <label class="form-label">
-              App Secret 
+            <label class="form-label" for="metaAppSecret">
+              Meta App Secret 
               @if (metaConfig.has_secret) {
                 <span class="secure-tag">(Encrypted: {{ metaConfig.masked_secret }})</span>
               }
             </label>
-            <input 
-              type="password" 
-              class="form-input" 
-              [(ngModel)]="metaSecretInput" 
-              [placeholder]="metaConfig.has_secret ? 'Enter new secret to rotate' : 'Enter app secret'" 
-            />
+            <div class="password-wrapper">
+              <input 
+                id="metaAppSecret"
+                [type]="showMetaSecret() ? 'text' : 'password'" 
+                class="form-input" 
+                [(ngModel)]="metaSecretInput" 
+                [placeholder]="metaConfig.has_secret ? 'Enter new secret to rotate' : 'Enter app secret'" 
+              />
+              <button type="button" class="toggle-pwd" (click)="showMetaSecret.update(v => !v)">
+                <app-icon [name]="showMetaSecret() ? 'eye-off' : 'eye'" [size]="15"></app-icon>
+              </button>
+            </div>
           </div>
 
           <div class="card-actions">
@@ -93,7 +108,8 @@ export interface ProviderConfigDto {
               [loading]="isTesting('meta')"
               (clicked)="testConfig('meta')"
             >
-              Test Handshake
+              <app-icon name="sync" [size]="14"></app-icon>
+              <span>Test Handshake</span>
             </app-button>
           </div>
         </div>
@@ -101,18 +117,24 @@ export interface ProviderConfigDto {
         <!-- Google Ads Dev Config -->
         <div class="config-card">
           <div class="card-header">
-            <div>
-              <h3 class="card-title">Google Ads API Credentials</h3>
-              <p class="card-desc">OAuth 2.0 Client credentials and Developer Token from Google Cloud / Ads Manager.</p>
+            <div class="card-title-group">
+              <div class="platform-icon">
+                <app-icon name="google" [size]="24"></app-icon>
+              </div>
+              <div>
+                <h3 class="card-title">Google Ads API Credentials</h3>
+                <p class="card-desc">OAuth 2.0 Web Client credentials and MCC Developer Token.</p>
+              </div>
             </div>
             <app-badge [variant]="getBadgeVariant(googleConfig.test_status)">
-              {{ googleConfig.test_status }}
+              {{ googleConfig.test_status | uppercase }}
             </app-badge>
           </div>
 
           <div class="form-group">
-            <label class="form-label">Client ID</label>
+            <label class="form-label" for="googleClientId">Client ID</label>
             <input 
+              id="googleClientId"
               type="text" 
               class="form-input" 
               [(ngModel)]="googleConfig.app_id" 
@@ -121,33 +143,45 @@ export interface ProviderConfigDto {
           </div>
 
           <div class="form-group">
-            <label class="form-label">
+            <label class="form-label" for="googleClientSecret">
               Client Secret 
               @if (googleConfig.has_secret) {
                 <span class="secure-tag">(Encrypted: {{ googleConfig.masked_secret }})</span>
               }
             </label>
-            <input 
-              type="password" 
-              class="form-input" 
-              [(ngModel)]="googleSecretInput" 
-              [placeholder]="googleConfig.has_secret ? 'Enter new secret to rotate' : 'Enter client secret'" 
-            />
+            <div class="password-wrapper">
+              <input 
+                id="googleClientSecret"
+                [type]="showGoogleSecret() ? 'text' : 'password'" 
+                class="form-input" 
+                [(ngModel)]="googleSecretInput" 
+                [placeholder]="googleConfig.has_secret ? 'Enter new secret to rotate' : 'Enter client secret'" 
+              />
+              <button type="button" class="toggle-pwd" (click)="showGoogleSecret.update(v => !v)">
+                <app-icon [name]="showGoogleSecret() ? 'eye-off' : 'eye'" [size]="15"></app-icon>
+              </button>
+            </div>
           </div>
 
           <div class="form-group">
-            <label class="form-label">
+            <label class="form-label" for="googleDevToken">
               Developer Token
               @if (googleConfig.has_developer_token) {
                 <span class="secure-tag">(Encrypted: {{ googleConfig.masked_developer_token }})</span>
               }
             </label>
-            <input 
-              type="password" 
-              class="form-input" 
-              [(ngModel)]="googleTokenInput" 
-              [placeholder]="googleConfig.has_developer_token ? 'Enter new token to rotate' : 'Enter developer token'" 
-            />
+            <div class="password-wrapper">
+              <input 
+                id="googleDevToken"
+                [type]="showGoogleToken() ? 'text' : 'password'" 
+                class="form-input" 
+                [(ngModel)]="googleTokenInput" 
+                [placeholder]="googleConfig.has_developer_token ? 'Enter new token to rotate' : 'Enter developer token'" 
+              />
+              <button type="button" class="toggle-pwd" (click)="showGoogleToken.update(v => !v)">
+                <app-icon [name]="showGoogleToken() ? 'eye-off' : 'eye'" [size]="15"></app-icon>
+              </button>
+            </div>
           </div>
 
           <div class="card-actions">
@@ -165,7 +199,8 @@ export interface ProviderConfigDto {
               [loading]="isTesting('google')"
               (clicked)="testConfig('google')"
             >
-              Test Handshake
+              <app-icon name="sync" [size]="14"></app-icon>
+              <span>Test Handshake</span>
             </app-button>
           </div>
         </div>
@@ -173,38 +208,50 @@ export interface ProviderConfigDto {
         <!-- TikTok Ads Dev Config -->
         <div class="config-card">
           <div class="card-header">
-            <div>
-              <h3 class="card-title">TikTok Marketing API Credentials</h3>
-              <p class="card-desc">App ID and Secret from TikTok for Business Developers.</p>
+            <div class="card-title-group">
+              <div class="platform-icon">
+                <app-icon name="tiktok" [size]="24"></app-icon>
+              </div>
+              <div>
+                <h3 class="card-title">TikTok Marketing API Credentials</h3>
+                <p class="card-desc">App ID and Secret from TikTok for Business Developer Portal.</p>
+              </div>
             </div>
             <app-badge [variant]="getBadgeVariant(tiktokConfig.test_status)">
-              {{ tiktokConfig.test_status }}
+              {{ tiktokConfig.test_status | uppercase }}
             </app-badge>
           </div>
 
           <div class="form-group">
-            <label class="form-label">App ID</label>
+            <label class="form-label" for="tiktokAppId">TikTok App ID</label>
             <input 
+              id="tiktokAppId"
               type="text" 
               class="form-input" 
               [(ngModel)]="tiktokConfig.app_id" 
-              placeholder="e.g. 7123456789012345678" 
+              placeholder="e.g. 6900000000000000000" 
             />
           </div>
 
           <div class="form-group">
-            <label class="form-label">
-              Secret
+            <label class="form-label" for="tiktokSecret">
+              TikTok App Secret 
               @if (tiktokConfig.has_secret) {
                 <span class="secure-tag">(Encrypted: {{ tiktokConfig.masked_secret }})</span>
               }
             </label>
-            <input 
-              type="password" 
-              class="form-input" 
-              [(ngModel)]="tiktokSecretInput" 
-              [placeholder]="tiktokConfig.has_secret ? 'Enter new secret to rotate' : 'Enter app secret'" 
-            />
+            <div class="password-wrapper">
+              <input 
+                id="tiktokSecret"
+                [type]="showTiktokSecret() ? 'text' : 'password'" 
+                class="form-input" 
+                [(ngModel)]="tiktokSecretInput" 
+                [placeholder]="tiktokConfig.has_secret ? 'Enter new secret to rotate' : 'Enter app secret'" 
+              />
+              <button type="button" class="toggle-pwd" (click)="showTiktokSecret.update(v => !v)">
+                <app-icon [name]="showTiktokSecret() ? 'eye-off' : 'eye'" [size]="15"></app-icon>
+              </button>
+            </div>
           </div>
 
           <div class="card-actions">
@@ -222,8 +269,68 @@ export interface ProviderConfigDto {
               [loading]="isTesting('tiktok')"
               (clicked)="testConfig('tiktok')"
             >
-              Test Handshake
+              <app-icon name="sync" [size]="14"></app-icon>
+              <span>Test Handshake</span>
             </app-button>
+          </div>
+        </div>
+
+        <!-- Google Looker Studio (Google Locker) Integration -->
+        <div class="config-card looker-highlight">
+          <div class="card-header">
+            <div class="card-title-group">
+              <div class="platform-icon">
+                <app-icon name="looker" [size]="24"></app-icon>
+              </div>
+              <div>
+                <h3 class="card-title">Google Looker Studio (Locker) Integration</h3>
+                <p class="card-desc">Real-time sync of unified cross-channel performance metrics directly to Google Looker Studio dashboards.</p>
+              </div>
+            </div>
+            <app-badge [variant]="lookerTestStatus() === 'connected' ? 'success' : 'neutral'">
+              {{ lookerTestStatus() === 'connected' ? 'ONLINE & READY' : 'CONNECTOR READY' }}
+            </app-badge>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Looker Studio Connector Data Endpoint</label>
+            <div class="url-copy-box">
+              <input type="text" readonly [value]="lookerEndpointUrl" class="form-input font-mono" />
+              <app-button variant="outline" size="sm" (clicked)="copyLookerEndpoint()">
+                <app-icon name="copy" [size]="14"></app-icon>
+                <span>{{ copiedLookerUrl() ? 'Copied!' : 'Copy URL' }}</span>
+              </app-button>
+            </div>
+            <span class="field-hint">Use this HTTPS endpoint in your Looker Studio Community Connector or Apps Script.</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Supported Dimensions & Metrics</label>
+            <div class="schema-tags">
+              <span class="schema-tag dim">Dimensions: date, platform, account, campaign, currency</span>
+              <span class="schema-tag metric">Metrics: spend, clicks, impressions, conversions, roas, cpc</span>
+            </div>
+          </div>
+
+          <div class="card-actions">
+            <app-button 
+              variant="primary" 
+              size="sm" 
+              [loading]="isTestingLooker()"
+              (clicked)="testLookerEndpoint()"
+            >
+              <app-icon name="sync" [size]="14"></app-icon>
+              <span>Verify Looker Endpoint</span>
+            </app-button>
+            <a 
+              href="https://lookerstudio.google.com" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              class="looker-portal-btn"
+            >
+              <app-icon name="external-link" [size]="14"></app-icon>
+              <span>Open Looker Studio</span>
+            </a>
           </div>
         </div>
       </div>
@@ -236,42 +343,41 @@ export interface ProviderConfigDto {
       gap: 1.75rem;
     }
 
-    .title {
+    .page-header .title {
       font-size: 1.5rem;
       font-weight: 700;
       color: var(--text-main);
     }
 
-    .subtitle {
+    .page-header .subtitle {
       font-size: 0.875rem;
       color: var(--text-muted);
       margin-top: 0.25rem;
     }
 
     .feedback-banner {
-      padding: 0.75rem 1rem;
+      padding: 0.875rem 1.25rem;
       border-radius: var(--radius-md);
       font-size: 0.875rem;
       font-weight: 500;
+    }
 
-      &.success {
-        background-color: var(--success-bg);
-        color: var(--success-text);
-        border: 1px solid var(--success);
-      }
+    .feedback-banner.success {
+      background-color: var(--success-bg);
+      color: var(--success-text);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
 
-      &.error {
-        background-color: var(--danger-bg);
-        color: var(--danger-text);
-        border: 1px solid var(--danger);
-      }
+    .feedback-banner.error {
+      background-color: var(--danger-bg);
+      color: var(--danger-text);
+      border: 1px solid rgba(239, 68, 68, 0.2);
     }
 
     .settings-cards {
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
       gap: 1.5rem;
-      max-width: 720px;
     }
 
     .config-card {
@@ -279,10 +385,16 @@ export interface ProviderConfigDto {
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-lg);
       padding: 1.5rem;
-      box-shadow: var(--shadow-sm);
       display: flex;
       flex-direction: column;
-      gap: 1rem;
+      gap: 1.25rem;
+      box-shadow: var(--shadow-sm);
+      transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    }
+
+    .config-card:hover {
+      border-color: var(--border-strong);
+      box-shadow: var(--shadow-md);
     }
 
     .card-header {
@@ -290,60 +402,160 @@ export interface ProviderConfigDto {
       align-items: flex-start;
       justify-content: space-between;
       gap: 1rem;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 1rem;
+    }
+
+    .card-title-group {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .platform-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+
+    .meta-icon {
+      background: linear-gradient(135deg, #1877f2, #0062e0);
+      color: #ffffff;
+    }
+
+    .google-icon {
+      background: linear-gradient(135deg, #ea4335, #fbbc05);
+      color: #ffffff;
+    }
+
+    .tiktok-icon {
+      background: linear-gradient(135deg, #000000, #25f4ee);
+      color: #ffffff;
     }
 
     .card-title {
-      font-size: 1.125rem;
+      font-size: 1rem;
       font-weight: 600;
       color: var(--text-main);
     }
 
     .card-desc {
-      font-size: 0.8125rem;
+      font-size: 0.75rem;
       color: var(--text-muted);
-      margin-top: 0.25rem;
+      margin-top: 0.15rem;
     }
 
     .form-group {
       display: flex;
       flex-direction: column;
-      gap: 0.375rem;
-    }
-
-    .form-label {
-      font-size: 0.8125rem;
-      font-weight: 500;
-      color: var(--text-main);
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
     }
 
     .secure-tag {
       font-size: 0.75rem;
-      color: var(--text-muted);
-      font-family: var(--font-family-mono);
+      color: var(--success);
+      font-weight: 600;
+      margin-left: 0.5rem;
     }
 
-    .form-input {
-      padding: 0.5rem 0.75rem;
-      border: 1px solid var(--border-strong);
-      border-radius: var(--radius-md);
-      background-color: var(--bg-app);
-      color: var(--text-main);
-      font-size: 0.875rem;
+    .password-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
 
-      &:focus {
-        outline: none;
-        border-color: var(--primary);
-        box-shadow: 0 0 0 2px var(--primary-ring);
-      }
+    .password-wrapper .form-input {
+      padding-right: 2.5rem;
+    }
+
+    .toggle-pwd {
+      position: absolute;
+      right: 0.75rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.25rem;
+    }
+
+    .toggle-pwd:hover {
+      color: var(--text-main);
     }
 
     .card-actions {
       display: flex;
+      align-items: center;
       gap: 0.75rem;
-      margin-top: 0.5rem;
+      margin-top: auto;
+      padding-top: 0.75rem;
+    }
+
+    .looker-highlight {
+      border-color: rgba(66, 133, 244, 0.35);
+      background: linear-gradient(180deg, rgba(66, 133, 244, 0.05) 0%, var(--bg-surface) 100%);
+    }
+
+    .url-copy-box {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .url-copy-box .form-input {
+      flex: 1;
+      font-size: 0.8125rem;
+    }
+
+    .field-hint {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    .schema-tags {
+      display: flex;
+      flex-direction: column;
+      gap: 0.375rem;
+    }
+
+    .schema-tag {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.625rem;
+      border-radius: var(--radius-sm);
+      font-family: monospace;
+    }
+
+    .schema-tag.dim {
+      background: rgba(99, 102, 241, 0.12);
+      color: #818cf8;
+      border: 1px solid rgba(99, 102, 241, 0.2);
+    }
+
+    .schema-tag.metric {
+      background: rgba(16, 185, 129, 0.12);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+
+    .looker-portal-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      font-size: 0.8125rem;
+      color: #60a5fa;
+      padding: 0.375rem 0.75rem;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(96, 165, 250, 0.3);
+      transition: all 0.2s ease;
+      &:hover {
+        background: rgba(96, 165, 250, 0.1);
+        color: #93c5fd;
+      }
     }
   `]
 })
@@ -352,8 +564,18 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
 
   readonly feedbackMessage = signal<string | null>(null);
   readonly feedbackType = signal<'success' | 'error'>('success');
-
   readonly activeOperations = signal<Record<string, boolean>>({});
+
+  readonly showMetaSecret = signal<boolean>(false);
+  readonly showGoogleSecret = signal<boolean>(false);
+  readonly showGoogleToken = signal<boolean>(false);
+  readonly showTiktokSecret = signal<boolean>(false);
+
+  readonly lookerStatus = signal<'ready' | 'connected'>('ready');
+  readonly lookerTestStatus = signal<'untested' | 'connected' | 'error'>('untested');
+  readonly isTestingLooker = signal<boolean>(false);
+  readonly copiedLookerUrl = signal<boolean>(false);
+  readonly lookerEndpointUrl = `${window.location.origin}/api/v1/looker`;
 
   metaConfig: ProviderConfigDto = this.createDefault('meta');
   googleConfig: ProviderConfigDto = this.createDefault('google');
@@ -379,9 +601,7 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
           }
         }
       },
-      error: () => {
-        // Will be empty if unauthenticated in tests
-      }
+      error: () => {}
     });
   }
 
@@ -447,6 +667,30 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
         this.setOp(key, false);
         this.showFeedback(err.error?.error?.message || 'Handshake failed.', 'error');
         this.fetchConfigs();
+      }
+    });
+  }
+
+  copyLookerEndpoint(): void {
+    navigator.clipboard.writeText(this.lookerEndpointUrl);
+    this.copiedLookerUrl.set(true);
+    this.showFeedback('Looker Studio Connector endpoint URL copied to clipboard!', 'success');
+    setTimeout(() => this.copiedLookerUrl.set(false), 3000);
+  }
+
+  testLookerEndpoint(): void {
+    this.isTestingLooker.set(true);
+    this.http.get<{ schema: any[] }>('/api/v1/looker?schema=true').subscribe({
+      next: (res) => {
+        this.isTestingLooker.set(false);
+        this.lookerTestStatus.set('connected');
+        this.lookerStatus.set('connected');
+        this.showFeedback(`Google Looker Studio endpoint verified! Schema valid with ${res.schema.length} fields.`, 'success');
+      },
+      error: (err) => {
+        this.isTestingLooker.set(false);
+        this.lookerTestStatus.set('error');
+        this.showFeedback(err.error?.error?.message || 'Looker Studio test connection failed.', 'error');
       }
     });
   }

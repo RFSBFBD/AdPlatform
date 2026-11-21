@@ -1,0 +1,16 @@
+{
+  "timeZone": "Etc/GMT",
+  "dependencies": {},
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "dataStudio": {
+    "name": "Advertising Management Platform Connector",
+    "logoUrl": "https://raw.githubusercontent.com/ad-platform/assets/main/logo.png",
+    "company": "AdPlatform Corp",
+    "companyUrl": "https://adplatform.local",
+    "addonUrl": "https://adplatform.local/looker-studio",
+    "supportUrl": "https://adplatform.local/support",
+    "description": "Multi-Channel Advertising Connector for Meta Ads, Google Ads, and TikTok Ads.",
+    "sources": ["META_ADS", "GOOGLE_ADS", "TIKTOK_ADS"]
+  }
+}

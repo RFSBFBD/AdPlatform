@@ -58,4 +58,9 @@ class User extends Authenticatable
             }
         });
     }
+
+    public function connectedAdAccounts()
+    {
+        return $this->hasMany(ConnectedAdAccount::class);
+    }
 }

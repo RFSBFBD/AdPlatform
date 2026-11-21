@@ -35,6 +35,46 @@ class UserController extends Controller
     }
 
     /**
+     * Directly create a new user with name, email, password, and role.
+     */
+    public function store(Request $request): JsonResponse
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:users,email',
+            'password' => 'required|string|min:8',
+            'role' => 'required|string|exists:roles,name',
+        ]);
+
+        $user = User::create([
+            'name' => $request->name,
+            'email' => $request->email,
+            'password' => \Illuminate\Support\Facades\Hash::make($request->password),
+            'email_verified_at' => now(),
+        ]);
+
+        $user->assignRole($request->role);
+
+        AuditLog::log('user.created', $request->user()->id, 'User', (string)$user->id, [
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $request->role,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'User created successfully.',
+            'data' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'roles' => [$request->role],
+                'created_at' => $user->created_at->toIso8601String(),
+            ],
+        ], 201);
+    }
+
+    /**
      * Invite a new application user.
      */
     public function invite(Request $request): JsonResponse

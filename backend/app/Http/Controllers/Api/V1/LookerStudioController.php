@@ -42,9 +42,15 @@ class LookerStudioController extends Controller
         $startDate = $request->query('start_date', Carbon::now()->subDays(30)->format('Y-m-d'));
         $endDate = $request->query('end_date', Carbon::now()->format('Y-m-d'));
 
+        // Tenancy / User Scoping (SEC-POST-01) - indexed subquery
+        $userId = $request->user()->id;
+
         $query = PerformanceMetric::query()
             ->join('connected_ad_accounts', 'performance_metrics.connected_ad_account_id', '=', 'connected_ad_accounts.id')
             ->leftJoin('campaigns', 'performance_metrics.campaign_id', '=', 'campaigns.id')
+            ->whereIn('performance_metrics.connected_ad_account_id', function ($sub) use ($userId) {
+                $sub->select('id')->from('connected_ad_accounts')->where('user_id', $userId);
+            })
             ->whereBetween('performance_metrics.date', [$startDate, $endDate])
             ->select([
                 'performance_metrics.date',

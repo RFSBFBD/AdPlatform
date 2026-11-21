@@ -160,4 +160,61 @@ class IntegrationTest extends TestCase
             'action' => 'ad_account.connected',
         ]);
     }
+
+    public function test_connecting_account_already_owned_by_another_user_is_forbidden(): void
+    {
+        $otherUser = User::firstOrCreate(
+            ['email' => 'other_connect_user@example.com'],
+            ['name' => 'Other Connect User', 'password' => bcrypt('password123'), 'status' => 'active']
+        );
+        $otherToken = $otherUser->createToken('test')->plainTextToken;
+
+        // User A connects the account
+        ConnectedAdAccount::create([
+            'user_id' => $this->owner->id,
+            'provider' => 'meta',
+            'external_account_id' => 'act_takeover_target_999',
+            'account_name' => 'Protected Brand Account',
+            'currency' => 'USD',
+            'timezone' => 'UTC',
+            'access_token' => 'original_token',
+            'status' => 'connected',
+        ]);
+
+        // User B attempts to connect the same account ID
+        $sessionKey = "discovered_accounts:meta:{$otherUser->id}";
+        Cache::put($sessionKey, [
+            'token_data' => [
+                'access_token' => 'attacker_token',
+                'refresh_token' => null,
+                'expires_at' => now()->addDays(60),
+            ],
+            'accounts' => [
+                [
+                    'provider' => 'meta',
+                    'external_account_id' => 'act_takeover_target_999',
+                    'account_name' => 'Protected Brand Account',
+                    'currency' => 'USD',
+                    'timezone' => 'UTC',
+                ],
+            ],
+        ], 600);
+
+        $response = $this->withHeader('Authorization', "Bearer {$otherToken}")
+            ->postJson('/api/v1/integrations/meta/connect', [
+                'selected_account_ids' => ['act_takeover_target_999'],
+            ]);
+
+        $response->assertStatus(403)
+            ->assertJson([
+                'success' => false,
+                'error' => [
+                    'code' => 'ACCOUNT_ALREADY_CONNECTED',
+                ],
+            ]);
+
+        // Verify account ownership did NOT change
+        $account = ConnectedAdAccount::where('external_account_id', 'act_takeover_target_999')->first();
+        $this->assertEquals($this->owner->id, $account->user_id);
+    }
 }

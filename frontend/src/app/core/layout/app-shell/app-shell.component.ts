@@ -3,18 +3,33 @@ import { CommonModule } from '@angular/common';
 import { RouterModule, Router } from '@angular/router';
 import { ThemeService } from '../../services/theme.service';
 import { AuthService } from '../../services/auth.service';
+import { BrandLogoComponent } from '../../../shared/components/brand-logo/brand-logo.component';
+import { IconComponent } from '../../../shared/components/icon/icon.component';
+import { ThemeSwitchComponent } from '../../../shared/components/theme-switch/theme-switch.component';
+import { RouteProgressBarComponent } from '../../../shared/components/route-progress-bar/route-progress-bar.component';
 
 interface NavItem {
   label: string;
   route: string;
   icon: string;
+  badge?: string;
 }
 
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [CommonModule, RouterModule],
+  imports: [
+    CommonModule, 
+    RouterModule, 
+    BrandLogoComponent, 
+    IconComponent, 
+    ThemeSwitchComponent, 
+    RouteProgressBarComponent
+  ],
   template: `
+    <!-- Top Route Loading Tap Indicator -->
+    <app-route-progress-bar></app-route-progress-bar>
+
     <div class="shell-layout" [class.mobile-open]="isMobileMenuOpen()">
       <!-- Mobile Backdrop -->
       @if (isMobileMenuOpen()) {
@@ -24,14 +39,15 @@ interface NavItem {
       <!-- Sidebar -->
       <aside class="sidebar">
         <div class="sidebar-brand">
-          <div class="brand-logo">AD</div>
+          <app-brand-logo [size]="34"></app-brand-logo>
           <div class="brand-info">
             <span class="brand-title">AdPlatform</span>
-            <span class="brand-badge">SaaS</span>
+            <span class="brand-badge">SaaS Intelligence</span>
           </div>
         </div>
 
         <nav class="sidebar-nav">
+          <div class="nav-section-title">CORE PLATFORM</div>
           @for (item of navItems; track item.route) {
             <a 
               [routerLink]="item.route" 
@@ -39,8 +55,11 @@ interface NavItem {
               class="nav-link"
               (click)="closeMobileMenu()"
             >
-              <span class="nav-icon">{{ item.icon }}</span>
+              <app-icon [name]="item.icon" [size]="18" class="nav-icon"></app-icon>
               <span class="nav-label">{{ item.label }}</span>
+              @if (item.badge) {
+                <span class="nav-item-badge">{{ item.badge }}</span>
+              }
             </a>
           }
         </nav>
@@ -50,7 +69,7 @@ interface NavItem {
             <div class="user-avatar">{{ getUserInitials() }}</div>
             <div class="user-details">
               <span class="user-name">{{ authService.currentUser()?.name || 'User' }}</span>
-              <span class="user-role">{{ getPrimaryRole() }}</span>
+              <span class="user-role">{{ getPrimaryRole() | titlecase }}</span>
             </div>
             <button 
               type="button" 
@@ -59,7 +78,7 @@ interface NavItem {
               title="Sign Out"
               aria-label="Sign Out"
             >
-              🚪
+              <app-icon name="logout" [size]="16"></app-icon>
             </button>
           </div>
         </div>
@@ -76,26 +95,14 @@ interface NavItem {
               (click)="toggleMobileMenu()" 
               aria-label="Toggle navigation menu"
             >
-              ☰
+              <app-icon name="menu" [size]="20"></app-icon>
             </button>
             <h1 class="page-title">{{ getPageTitle() }}</h1>
           </div>
 
           <div class="topbar-right">
-            <!-- Theme Toggle Button -->
-            <button 
-              type="button" 
-              class="icon-btn theme-toggle" 
-              (click)="themeService.toggleTheme()" 
-              [title]="themeService.currentTheme() === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'"
-              aria-label="Toggle color theme"
-            >
-              @if (themeService.currentTheme() === 'dark') {
-                <span class="theme-icon">☀️</span>
-              } @else {
-                <span class="theme-icon">🌙</span>
-              }
-            </button>
+            <!-- Modern Animated Sun/Moon/Clouds Theme Switch -->
+            <app-theme-switch size="12.5px"></app-theme-switch>
           </div>
         </header>
 
@@ -127,36 +134,22 @@ interface NavItem {
     }
 
     .sidebar-brand {
-      height: 64px;
+      height: 68px;
       padding: 0 1.25rem;
       display: flex;
       align-items: center;
-      gap: 0.75rem;
+      gap: 0.85rem;
       border-bottom: 1px solid var(--sidebar-border);
-    }
-
-    .brand-logo {
-      width: 36px;
-      height: 36px;
-      border-radius: var(--radius-md);
-      background: linear-gradient(135deg, var(--primary), #818cf8);
-      color: #ffffff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 700;
-      font-size: 0.875rem;
     }
 
     .brand-info {
       display: flex;
-      align-items: center;
-      gap: 0.5rem;
+      flex-direction: column;
     }
 
     .brand-title {
       font-weight: 700;
-      font-size: 1.0625rem;
+      font-size: 1.05rem;
       color: var(--text-main);
       letter-spacing: -0.02em;
     }
@@ -164,20 +157,26 @@ interface NavItem {
     .brand-badge {
       font-size: 0.6875rem;
       font-weight: 600;
-      text-transform: uppercase;
-      padding: 0.125rem 0.375rem;
-      background-color: var(--primary-light);
       color: var(--primary);
-      border-radius: var(--radius-sm);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
     .sidebar-nav {
       flex: 1;
-      padding: 1rem 0.75rem;
+      padding: 1.25rem 0.875rem;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: 0.25rem;
+    }
+
+    .nav-section-title {
+      font-size: 0.6875rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--text-subtle);
+      padding: 0.5rem 0.75rem 0.35rem;
     }
 
     .nav-link {
@@ -187,30 +186,41 @@ interface NavItem {
       padding: 0.625rem 0.875rem;
       border-radius: var(--radius-md);
       color: var(--text-muted);
-      font-size: 0.875rem;
       font-weight: 500;
+      font-size: 0.875rem;
       transition: all var(--transition-fast);
-
-      &:hover {
-        background-color: var(--bg-subtle);
-        color: var(--text-main);
-      }
-
-      &.active {
-        background-color: var(--primary-light);
-        color: var(--primary);
-        font-weight: 600;
-      }
+      position: relative;
     }
 
-    .nav-icon {
-      font-size: 1.125rem;
-      width: 22px;
-      text-align: center;
+    .nav-link:hover {
+      background-color: var(--bg-subtle);
+      color: var(--text-main);
+    }
+
+    .nav-link.active {
+      background-color: var(--primary-light);
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    .nav-link.active .nav-icon {
+      color: var(--primary);
+    }
+
+    .nav-item-badge {
+      margin-left: auto;
+      font-size: 0.65rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #6366f1, #06b6d4);
+      color: #ffffff;
+      padding: 0.15rem 0.45rem;
+      border-radius: var(--radius-full);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
     }
 
     .sidebar-footer {
-      padding: 1rem 0.75rem;
+      padding: 1rem;
       border-top: 1px solid var(--sidebar-border);
     }
 
@@ -221,27 +231,28 @@ interface NavItem {
       padding: 0.5rem;
       border-radius: var(--radius-md);
       background-color: var(--bg-subtle);
+      border: 1px solid var(--border-subtle);
     }
 
     .user-avatar {
       width: 34px;
       height: 34px;
-      border-radius: 50%;
-      background-color: var(--primary);
+      border-radius: var(--radius-full);
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
       color: #ffffff;
+      font-size: 0.8125rem;
+      font-weight: 700;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 600;
-      font-size: 0.8125rem;
       flex-shrink: 0;
     }
 
     .user-details {
+      flex: 1;
+      min-width: 0;
       display: flex;
       flex-direction: column;
-      overflow: hidden;
-      flex: 1;
     }
 
     .user-name {
@@ -249,48 +260,51 @@ interface NavItem {
       font-weight: 600;
       color: var(--text-main);
       white-space: nowrap;
-      text-overflow: ellipsis;
       overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .user-role {
       font-size: 0.6875rem;
-      color: var(--text-muted);
+      color: var(--text-subtle);
     }
 
     .logout-icon-btn {
       color: var(--text-muted);
-      font-size: 1rem;
-      padding: 0.25rem;
+      padding: 0.35rem;
       border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
       transition: all var(--transition-fast);
-
-      &:hover {
-        color: var(--danger);
-        background-color: var(--bg-hover);
-      }
     }
 
-    /* Main Area */
+    .logout-icon-btn:hover {
+      color: var(--danger);
+      background-color: var(--danger-bg);
+    }
+
+    /* Main Content */
     .main-wrapper {
       flex: 1;
       display: flex;
       flex-direction: column;
       min-width: 0;
-      height: 100vh;
       overflow: hidden;
     }
 
     .topbar {
-      height: 64px;
+      height: 68px;
       padding: 0 1.5rem;
+      background-color: var(--header-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--sidebar-border);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      border-bottom: 1px solid var(--border-subtle);
-      background-color: var(--header-bg);
-      backdrop-filter: blur(8px);
-      z-index: 10;
+      flex-shrink: 0;
+      z-index: 20;
     }
 
     .topbar-left {
@@ -301,49 +315,24 @@ interface NavItem {
 
     .hamburger-btn {
       display: none;
-      font-size: 1.25rem;
       color: var(--text-main);
-      padding: 0.375rem;
+      padding: 0.35rem;
       border-radius: var(--radius-sm);
     }
 
     .page-title {
       font-size: 1.125rem;
-      font-weight: 600;
+      font-weight: 700;
       color: var(--text-main);
-    }
-
-    .topbar-right {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-    }
-
-    .icon-btn {
-      width: 38px;
-      height: 38px;
-      border-radius: var(--radius-md);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background-color: var(--bg-surface);
-      border: 1px solid var(--border-subtle);
-      color: var(--text-main);
-      transition: all var(--transition-fast);
-
-      &:hover {
-        background-color: var(--bg-hover);
-        border-color: var(--border-strong);
-      }
+      letter-spacing: -0.01em;
     }
 
     .content-container {
       flex: 1;
-      padding: 1.75rem;
       overflow-y: auto;
+      padding: 1.75rem 2rem;
     }
 
-    /* Responsive Breakpoints */
     @media (max-width: 768px) {
       .sidebar {
         position: fixed;
@@ -381,14 +370,14 @@ export class AppShellComponent {
 
   readonly isMobileMenuOpen = signal<boolean>(false);
 
+  // Modern navigation items: Billing and Accounts removed per user request, AI Chatbot replaced with Operations Research Engine
   readonly navItems: NavItem[] = [
-    { label: 'Overview Dashboard', route: '/dashboard', icon: '📊' },
-    { label: 'Campaigns', route: '/campaigns', icon: '🎯' },
-    { label: 'Ad Accounts', route: '/accounts', icon: '🔗' },
-    { label: 'Billing & Payments', route: '/billing', icon: '💳' },
-    { label: 'AI Center', route: '/ai-center', icon: '✨' },
-    { label: 'Developer API Settings', route: '/developer-settings', icon: '⚙️' },
-    { label: 'Team & Access', route: '/team', icon: '👥' },
+    { label: 'Overview Dashboard', route: '/dashboard', icon: 'dashboard' },
+    { label: 'Campaigns', route: '/campaigns', icon: 'campaigns' },
+    { label: 'Operations Research', route: '/operations-research', icon: 'chart', badge: 'OR' },
+    { label: 'AI Model APIs', route: '/ai-center', icon: 'ai' },
+    { label: 'Developer API Hub', route: '/developer-settings', icon: 'developer' },
+    { label: 'Team & Access', route: '/team', icon: 'team' },
   ];
 
   toggleMobileMenu(): void {
@@ -402,7 +391,7 @@ export class AppShellComponent {
   getPageTitle(): string {
     const url = this.router.url;
     const current = this.navItems.find(i => url.startsWith(i.route));
-    return current ? current.label : 'AdPlatform';
+    return current ? current.label : 'AdPlatform Intelligence';
   }
 
   getUserInitials(): string {

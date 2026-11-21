@@ -6,6 +6,7 @@ import { EmptyStateComponent } from '../../shared/components/empty-state/empty-s
 import { BadgeComponent } from '../../shared/components/badge/badge.component';
 import { ButtonComponent } from '../../shared/components/button/button.component';
 import { ModalComponent } from '../../shared/components/modal/modal.component';
+import { IconComponent } from '../../shared/components/icon/icon.component';
 
 export interface CampaignListItem {
   id: number;
@@ -33,7 +34,7 @@ export interface CampaignListItem {
 @Component({
   selector: 'app-campaigns-feature',
   standalone: true,
-  imports: [CommonModule, FormsModule, EmptyStateComponent, BadgeComponent, ButtonComponent, ModalComponent],
+  imports: [CommonModule, FormsModule, EmptyStateComponent, BadgeComponent, ButtonComponent, ModalComponent, IconComponent],
   template: `
     <div class="campaigns-page">
       <!-- Header -->
@@ -52,14 +53,14 @@ export interface CampaignListItem {
             placeholder="Search campaigns by name or external ID..." 
             [(ngModel)]="searchQuery" 
             (keyup.enter)="loadCampaigns()"
-            class="input-search"
+            class="form-input input-search" 
           />
-          <app-button variant="outline" size="sm" (clicked)="loadCampaigns()">Search</app-button>
+          <app-button variant="primary" size="sm" (clicked)="loadCampaigns()">Search</app-button>
         </div>
 
         <div class="filter-group">
           <!-- Platform Filter -->
-          <select [(ngModel)]="selectedProvider" (change)="loadCampaigns()" class="select-filter">
+          <select [(ngModel)]="selectedProvider" (change)="loadCampaigns()" class="form-input select-filter">
             <option value="">All Platforms</option>
             <option value="meta">Meta Ads</option>
             <option value="google">Google Ads</option>
@@ -67,7 +68,7 @@ export interface CampaignListItem {
           </select>
 
           <!-- Status Filter -->
-          <select [(ngModel)]="selectedStatus" (change)="loadCampaigns()" class="select-filter">
+          <select [(ngModel)]="selectedStatus" (change)="loadCampaigns()" class="form-input select-filter">
             <option value="">All Statuses</option>
             <option value="ACTIVE">Active</option>
             <option value="PAUSED">Paused</option>
@@ -105,7 +106,10 @@ export interface CampaignListItem {
                     </div>
                   </td>
                   <td>
-                    <span [class]="'platform-badge ' + camp.provider">{{ camp.provider | uppercase }}</span>
+                    <span [class]="'platform-badge ' + camp.provider">
+                      <app-icon [name]="camp.provider" [size]="15"></app-icon>
+                      <span>{{ camp.provider | uppercase }}</span>
+                    </span>
                   </td>
                   <td class="account-cell">{{ camp.account_name || 'N/A' }}</td>
                   <td>
@@ -242,11 +246,18 @@ export interface CampaignListItem {
 
     .select-filter {
       padding: 0.5rem 0.75rem;
-      border: 1px solid var(--border-color);
+      border: 1px solid var(--input-border, var(--border-color));
       border-radius: var(--border-radius-sm, 6px);
-      background: var(--bg-surface-hover);
-      color: var(--text-main);
+      background-color: var(--input-bg, #131b2e);
+      color: var(--input-text, #f8fafc);
       font-size: 0.875rem;
+      cursor: pointer;
+
+      option {
+        background-color: var(--bg-surface, #0f172a);
+        color: var(--text-main, #f8fafc);
+        padding: 0.5rem;
+      }
 
       &:focus {
         outline: none;

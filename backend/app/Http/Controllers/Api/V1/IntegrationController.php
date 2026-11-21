@@ -138,12 +138,28 @@ class IntegrationController extends Controller
             $accountMeta = $discovered->get($accId);
             if (!$accountMeta) continue;
 
+            // Prevent account hijacking across tenants (SEC-POST-02)
+            $existing = ConnectedAdAccount::where('provider', $provider)
+                ->where('external_account_id', $accId)
+                ->first();
+
+            if ($existing && $existing->user_id !== null && $existing->user_id !== $request->user()->id) {
+                return response()->json([
+                    'success' => false,
+                    'error' => [
+                        'code' => 'ACCOUNT_ALREADY_CONNECTED',
+                        'message' => "The account '{$accountMeta['account_name']}' ({$accId}) is already connected to another user.",
+                    ],
+                ], 403);
+            }
+
             $account = ConnectedAdAccount::updateOrCreate(
                 [
                     'provider' => $provider,
                     'external_account_id' => $accId,
                 ],
                 [
+                    'user_id' => $request->user()->id,
                     'account_name' => $accountMeta['account_name'],
                     'currency' => $accountMeta['currency'],
                     'timezone' => $accountMeta['timezone'],
@@ -180,6 +196,9 @@ class IntegrationController extends Controller
     {
         $query = ConnectedAdAccount::query();
 
+        // Tenancy / User Scoping (SEC-001)
+        $query->where('user_id', $request->user()->id);
+
         if ($request->has('provider')) {
             $query->where('provider', $request->provider);
         }
@@ -197,7 +216,29 @@ class IntegrationController extends Controller
      */
     public function disconnectAccount(Request $request, int $id): JsonResponse
     {
+        // Enforce RBAC permission check (SEC-002)
+        if (!$request->user()->can('manage-accounts') && !$request->user()->hasAnyRole(['Owner', 'Admin'])) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'UNAUTHORIZED',
+                    'message' => 'You do not have permission to disconnect advertising accounts.',
+                ],
+            ], 403);
+        }
+
         $account = ConnectedAdAccount::findOrFail($id);
+
+        // Enforce tenancy / ownership check (SEC-001 / SEC-POST-03)
+        if ($account->user_id !== $request->user()->id && !$request->user()->hasAnyRole(['Owner', 'Admin'])) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'FORBIDDEN',
+                    'message' => 'You do not have permission to manage this ad account.',
+                ],
+            ], 403);
+        }
 
         AuditLog::log('ad_account.disconnected', $request->user()->id, 'ConnectedAdAccount', (string)$account->id, [
             'provider' => $account->provider,

@@ -2,6 +2,10 @@
 
 namespace App\Services\Advertising\Sync;
 
+use App\Exceptions\OAuthTokenExpiredException;
+use App\Exceptions\ProviderRateLimitException;
+use App\Models\Ad;
+use App\Models\AdSet;
 use App\Models\Campaign;
 use App\Models\ConnectedAdAccount;
 use App\Models\PerformanceMetric;
@@ -68,7 +72,7 @@ class AdDataSyncEngine
 
             $adapter = $this->oauthManager->getAdapter($account->provider);
 
-            // Step 1: Sync Campaigns
+            // Step 1: Sync Campaigns & Hierarchical Entities
             $campaignData = $adapter->fetchCampaigns($account);
             
             // Persist raw audit payload
@@ -80,6 +84,9 @@ class AdDataSyncEngine
             ]);
 
             $campaignMap = [];
+            $adSetMap = [];
+            $adMap = [];
+
             foreach ($campaignData['campaigns'] ?? [] as $camp) {
                 $campaign = Campaign::updateOrCreate(
                     [
@@ -101,9 +108,53 @@ class AdDataSyncEngine
                 );
 
                 $campaignMap[$camp['external_campaign_id']] = $campaign->id;
+
+                // Step 1b: Ingest Ad Sets and Ads hierarchy (INT-002 / Phase 4)
+                if (!empty($camp['ad_sets']) && is_array($camp['ad_sets'])) {
+                    foreach ($camp['ad_sets'] as $adSetData) {
+                        $adSet = AdSet::updateOrCreate(
+                            [
+                                'campaign_id' => $campaign->id,
+                                'external_ad_set_id' => $adSetData['external_ad_set_id'],
+                            ],
+                            [
+                                'name' => $adSetData['name'] ?? 'Ad Set ' . $adSetData['external_ad_set_id'],
+                                'status' => strtoupper($adSetData['status'] ?? 'ACTIVE'),
+                                'daily_budget' => $adSetData['daily_budget'] ?? null,
+                                'lifetime_budget' => $adSetData['lifetime_budget'] ?? null,
+                                'targeting' => $adSetData['targeting'] ?? null,
+                                'metadata' => $adSetData['metadata'] ?? null,
+                            ]
+                        );
+
+                        $adSetMap[$adSetData['external_ad_set_id']] = $adSet->id;
+
+                        if (!empty($adSetData['ads']) && is_array($adSetData['ads'])) {
+                            foreach ($adSetData['ads'] as $adData) {
+                                $ad = Ad::updateOrCreate(
+                                    [
+                                        'ad_set_id' => $adSet->id,
+                                        'external_ad_id' => $adData['external_ad_id'],
+                                    ],
+                                    [
+                                        'name' => $adData['name'] ?? 'Ad ' . $adData['external_ad_id'],
+                                        'status' => strtoupper($adData['status'] ?? 'ACTIVE'),
+                                        'creative_type' => $adData['creative_type'] ?? 'IMAGE',
+                                        'headline' => $adData['headline'] ?? null,
+                                        'body_text' => $adData['body_text'] ?? null,
+                                        'destination_url' => $adData['destination_url'] ?? null,
+                                        'metadata' => $adData['metadata'] ?? null,
+                                    ]
+                                );
+
+                                $adMap[$adData['external_ad_id']] = $ad->id;
+                            }
+                        }
+                    }
+                }
             }
 
-            // Step 2: Sync Insights / Performance Metrics
+            // Step 2: Sync Insights / Performance Metrics at accurate entity level
             $insightsData = $adapter->fetchInsights($account, $startDate, $endDate);
 
             // Persist raw audit payload for insights
@@ -119,14 +170,34 @@ class AdDataSyncEngine
 
             foreach ($insightsData['metrics'] ?? [] as $m) {
                 $campaignId = null;
+                $adSetId = null;
+                $adId = null;
+
+                // Resolve Ad level ID if present
+                if (!empty($m['external_ad_id'])) {
+                    $adId = $adMap[$m['external_ad_id']] ?? Ad::where('external_ad_id', $m['external_ad_id'])->value('id');
+                }
+
+                // Resolve AdSet level ID if present
+                if (!empty($m['external_ad_set_id'])) {
+                    $adSetId = $adSetMap[$m['external_ad_set_id']] ?? AdSet::where('external_ad_set_id', $m['external_ad_set_id'])->value('id');
+                }
+
+                // Resolve Campaign level ID
                 if (!empty($m['external_campaign_id']) && isset($campaignMap[$m['external_campaign_id']])) {
                     $campaignId = $campaignMap[$m['external_campaign_id']];
                 } elseif (!empty($m['external_campaign_id'])) {
-                    // Try to find campaign in DB
-                    $c = Campaign::where('connected_ad_account_id', $account->id)
+                    $campaignId = Campaign::where('connected_ad_account_id', $account->id)
                         ->where('external_campaign_id', $m['external_campaign_id'])
-                        ->first();
-                    $campaignId = $c?->id;
+                        ->value('id');
+                }
+
+                // Backfill parent relationships if metric came with child IDs only
+                if ($adId && !$adSetId) {
+                    $adSetId = Ad::where('id', $adId)->value('ad_set_id');
+                }
+                if ($adSetId && !$campaignId) {
+                    $campaignId = AdSet::where('id', $adSetId)->value('campaign_id');
                 }
 
                 $spend = (float) ($m['spend'] ?? 0);
@@ -142,16 +213,17 @@ class AdDataSyncEngine
                 $roas = $spend > 0 ? ($conversionValue / $spend) : 0.0;
                 $cpa = $conversions > 0 ? ($spend / $conversions) : 0.0;
 
+                // Hierarchical matching criteria preventing metric overwrites between different entities (Phase 4)
                 PerformanceMetric::updateOrCreate(
                     [
                         'connected_ad_account_id' => $account->id,
                         'campaign_id' => $campaignId,
+                        'ad_set_id' => $adSetId,
+                        'ad_id' => $adId,
                         'date' => $m['date'],
                         'provider' => $account->provider,
                     ],
                     [
-                        'ad_set_id' => null,
-                        'ad_id' => null,
                         'spend' => $spend,
                         'impressions' => $impressions,
                         'clicks' => $clicks,
@@ -166,6 +238,7 @@ class AdDataSyncEngine
                         'metadata' => [
                             'synced_at' => now()->toIso8601String(),
                             'sync_type' => $syncType,
+                            'entity_level' => $adId ? 'ad' : ($adSetId ? 'ad_set' : 'campaign'),
                         ],
                     ]
                 );
@@ -190,12 +263,33 @@ class AdDataSyncEngine
             ]);
 
             return $syncRun;
+        } catch (OAuthTokenExpiredException $e) {
+            Log::warning("AdDataSyncEngine OAuth token expired on account #{$account->id}: {$e->getMessage()}");
+            $account->update(['status' => 'token_expired']);
+
+            $syncRun->update([
+                'status' => 'failed',
+                'completed_at' => now(),
+                'error_message' => "OAuth token expired for {$account->provider}. Re-authentication required.",
+            ]);
+
+            return $syncRun;
+        } catch (ProviderRateLimitException $e) {
+            Log::warning("AdDataSyncEngine rate limited on account #{$account->id}: {$e->getMessage()}");
+            $account->update(['status' => 'rate_limited']);
+
+            $syncRun->update([
+                'status' => 'failed',
+                'completed_at' => now(),
+                'error_message' => "Provider rate limit reached for {$account->provider}.",
+            ]);
+
+            return $syncRun;
         } catch (Throwable $e) {
             Log::error("AdDataSyncEngine error on account #{$account->id}: {$e->getMessage()}", [
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            // Handle provider rate limit indicators
             if (str_contains(strtolower($e->getMessage()), 'rate limit') || str_contains($e->getMessage(), '429')) {
                 $account->update(['status' => 'rate_limited']);
             }

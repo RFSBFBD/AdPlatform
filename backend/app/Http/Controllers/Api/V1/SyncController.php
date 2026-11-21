@@ -23,6 +23,16 @@ class SyncController extends Controller
     {
         $account = ConnectedAdAccount::findOrFail($id);
 
+        if ($account->user_id !== $request->user()->id && !$request->user()->hasAnyRole(['Owner', 'Admin'])) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'FORBIDDEN',
+                    'message' => 'You do not have permission to sync this ad account.',
+                ],
+            ], 403);
+        }
+
         $validated = $request->validate([
             'sync_type' => ['nullable', 'string', 'in:initial,incremental,historical,manual'],
             'start_date' => ['nullable', 'date_format:Y-m-d'],
@@ -66,9 +76,20 @@ class SyncController extends Controller
     /**
      * Get the latest sync status for an ad account.
      */
-    public function getStatus(int $id): JsonResponse
+    public function getStatus(Request $request, int $id): JsonResponse
     {
         $account = ConnectedAdAccount::findOrFail($id);
+
+        if ($account->user_id !== $request->user()->id && !$request->user()->hasAnyRole(['Owner', 'Admin'])) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'FORBIDDEN',
+                    'message' => 'You do not have access to this ad account.',
+                ],
+            ], 403);
+        }
+
         $latestSync = SyncRun::where('connected_ad_account_id', $account->id)
             ->latest('id')
             ->first();
@@ -94,9 +115,20 @@ class SyncController extends Controller
     /**
      * Get sync history runs for an ad account.
      */
-    public function getHistory(int $id): JsonResponse
+    public function getHistory(Request $request, int $id): JsonResponse
     {
         $account = ConnectedAdAccount::findOrFail($id);
+
+        if ($account->user_id !== $request->user()->id && !$request->user()->hasAnyRole(['Owner', 'Admin'])) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'FORBIDDEN',
+                    'message' => 'You do not have access to this ad account.',
+                ],
+            ], 403);
+        }
+
         $runs = SyncRun::where('connected_ad_account_id', $account->id)
             ->latest('id')
             ->limit(20)

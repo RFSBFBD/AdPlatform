@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 class ConnectedAdAccount extends Model
 {
     protected $fillable = [
+        'user_id',
         'uuid',
         'provider',
         'external_account_id',
@@ -37,6 +38,11 @@ class ConnectedAdAccount extends Model
                 $account->uuid = (string) Str::uuid();
             }
         });
+    }
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
     }
 
     public function campaigns()
