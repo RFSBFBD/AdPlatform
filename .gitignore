@@ -28,3 +28,4 @@ redis_data/
 # IDE
 .idea/
 .vscode/
+.neon
