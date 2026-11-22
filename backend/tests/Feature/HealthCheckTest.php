@@ -14,12 +14,9 @@ class HealthCheckTest extends TestCase
         $response = $this->getJson('/api/v1/health');
 
         $response->assertStatus(200)
-                 ->assertJson([
-                     'status' => 'healthy',
-                     'services' => [
-                         'database' => 'healthy',
-                         'redis' => 'healthy',
-                     ],
-                 ]);
+                 ->assertJsonPath('status', 'healthy')
+                 ->assertJsonPath('services.database', 'healthy');
+        // Redis is reported only when cache, queue or sessions use it; otherwise it is not_used.
+        $this->assertContains($response->json('services.redis'), ['healthy', 'not_used']);
     }
 }

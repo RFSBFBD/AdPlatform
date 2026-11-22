@@ -13,23 +13,28 @@ Route::prefix('v1')->group(function () {
     // 1. System Health Check Endpoint
     Route::get('/health', function () {
         $dbStatus = 'unhealthy';
-        $redisStatus = 'unhealthy';
+        $redisStatus = 'not_used';
 
         try {
             DB::connection()->getPdo();
             $dbStatus = 'healthy';
         } catch (\Throwable $e) {
-            $dbStatus = 'error: ' . $e->getMessage();
+            // Never echo the driver message: it can contain host and credential details.
+            $dbStatus = 'unreachable';
         }
 
-        try {
-            Redis::connection()->ping();
-            $redisStatus = 'healthy';
-        } catch (\Throwable $e) {
-            $redisStatus = 'error: ' . $e->getMessage();
+        // Redis counts only when cache, queue or sessions are configured to use it (the Vercel setup uses Postgres instead).
+        $usesRedis = in_array('redis', [config('cache.default'), config('queue.default'), config('session.driver')], true);
+        if ($usesRedis) {
+            try {
+                Redis::connection()->ping();
+                $redisStatus = 'healthy';
+            } catch (\Throwable $e) {
+                $redisStatus = 'unreachable';
+            }
         }
 
-        $isHealthy = ($dbStatus === 'healthy' && $redisStatus === 'healthy');
+        $isHealthy = $dbStatus === 'healthy' && in_array($redisStatus, ['healthy', 'not_used'], true);
 
         return response()->json([
             'status' => $isHealthy ? 'healthy' : 'degraded',

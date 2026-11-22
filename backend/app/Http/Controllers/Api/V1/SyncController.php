@@ -41,7 +41,10 @@ class SyncController extends Controller
         ]);
 
         $syncType = $validated['sync_type'] ?? 'manual';
-        $syncNow = $validated['sync_now'] ?? false;
+        // With the sync queue driver (the Vercel setup has no worker) dispatch() would run the job inline anyway.
+        // Report that honestly: run it here and return the real outcome instead of a "queued" 202.
+        $syncNow = ($validated['sync_now'] ?? false)
+            || app('queue')->connection() instanceof \Illuminate\Queue\SyncQueue;
 
         if ($syncNow) {
             // Run immediately in this process

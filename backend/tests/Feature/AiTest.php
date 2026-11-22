@@ -357,10 +357,12 @@ class AiTest extends TestCase
             'user_id' => $this->user->id, 'provider' => 'meta', 'external_account_id' => 'cur-' . uniqid(),
             'account_name' => 'EUR', 'access_token' => 'x',
         ]);
-        foreach ([['USD', 100], ['EUR', 200]] as [$cur, $spend]) {
+        // Distinct dates: the same account/date/provider with no campaign hierarchy is one row by design
+        // (unique index NULLS NOT DISTINCT), so two currencies need two different days.
+        foreach ([['USD', 100, 1], ['EUR', 200, 2]] as [$cur, $spend, $daysAgo]) {
             PerformanceMetric::create([
                 'connected_ad_account_id' => $account->id, 'provider' => 'meta', 'currency' => $cur,
-                'date' => now()->subDay()->toDateString(),
+                'date' => now()->subDays($daysAgo)->toDateString(),
                 'spend' => $spend, 'impressions' => 1000, 'clicks' => 10, 'conversions' => 1, 'conversion_value' => 300,
             ]);
         }

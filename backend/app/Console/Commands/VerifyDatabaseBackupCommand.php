@@ -39,11 +39,15 @@ class VerifyDatabaseBackupCommand extends Command
         $compressedFile = "{$backupFile}.gz";
         $checksumFile = "{$backupFile}.sha256";
 
-        $dbHost = Config::get('database.connections.pgsql.host', 'postgres');
-        $dbPort = Config::get('database.connections.pgsql.port', '5432');
-        $dbUser = Config::get('database.connections.pgsql.username', 'ad_user');
-        $dbPassword = Config::get('database.connections.pgsql.password', 'ad_password_secret_local');
-        $dbName = Config::get('database.connections.pgsql.database', 'advertising_platform');
+        // Resolved connection config (DB_URL is already parsed here). Config::get() would return the raw
+        // host/port defaults and ignore DB_URL, which is how the Vercel + Neon setup is configured.
+        $conn = DB::connection()->getConfig();
+        $dbHost = $conn['host'] ?? 'postgres';
+        $dbPort = $conn['port'] ?? '5432';
+        $dbUser = $conn['username'] ?? 'ad_user';
+        $dbPassword = $conn['password'] ?? 'ad_password_secret_local';
+        $dbName = $conn['database'] ?? 'advertising_platform';
+        $dbSslMode = $conn['sslmode'] ?? 'prefer';
 
         $tempDbCreated = false;
 
@@ -67,18 +71,11 @@ class VerifyDatabaseBackupCommand extends Command
                 "SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema = 'public' ORDER BY sequence_name"
             ))->pluck('sequence_name')->toArray();
 
-            // Representative key tables to verify row count parity
-            $checkTables = [
-                'users', 'connected_ad_accounts', 'campaigns', 'ad_sets', 'ads',
-                'performance_metrics', 'exchange_rates', 'provider_developer_configs',
-                'ai_configs', 'billing_invoices'
-            ];
-
+            // Row count parity for EVERY public table (a fixed list of "key" tables missed audit_logs and
+            // reported a passing backup that had silently lost a row).
             $primaryCounts = [];
-            foreach ($checkTables as $table) {
-                if (in_array($table, $primaryTables, true)) {
-                    $primaryCounts[$table] = (int) DB::table($table)->count();
-                }
+            foreach ($primaryTables as $table) {
+                $primaryCounts[$table] = (int) DB::table($table)->count();
             }
 
             $this->info("   Baseline captured: " . count($primaryTables) . " tables, " .
@@ -88,22 +85,47 @@ class VerifyDatabaseBackupCommand extends Command
             // STEP 2: Execute actual pg_dump
             $this->line("2. Executing actual pg_dump of database '{$dbName}'...");
 
-            $pgDumpCmd = sprintf(
-                'PGPASSWORD=%s pg_dump -h %s -p %s -U %s -d %s --no-owner --clean --if-exists | sed \'/transaction_timeout/d\' | gzip -9 > %s',
-                escapeshellarg($dbPassword),
-                escapeshellarg($dbHost),
-                escapeshellarg((string) $dbPort),
-                escapeshellarg($dbUser),
-                escapeshellarg($dbName),
-                escapeshellarg($compressedFile)
-            );
+            // No shell pipeline: a pipeline reports only the last command, so a failed pg_dump followed by a
+            // successful gzip produced a valid empty archive. Each stage is run and checked on its own.
+            $pgEnv = ['PGPASSWORD' => (string) $dbPassword, 'PGSSLMODE' => (string) $dbSslMode];
 
-            $dumpProcess = Process::fromShellCommandline($pgDumpCmd);
+            $dumpProcess = new Process([
+                'pg_dump', '-h', (string) $dbHost, '-p', (string) $dbPort, '-U', (string) $dbUser,
+                '-d', (string) $dbName, '--no-owner', '--clean', '--if-exists', '--file', $backupFile,
+            ], null, $pgEnv);
             $dumpProcess->setTimeout(120);
             $dumpProcess->run();
 
-            if (!$dumpProcess->isSuccessful() || !File::exists($compressedFile) || filesize($compressedFile) === 0) {
-                throw new \RuntimeException("pg_dump failed: " . $dumpProcess->getErrorOutput());
+            if (!$dumpProcess->isSuccessful()) {
+                throw new \RuntimeException("pg_dump failed (exit {$dumpProcess->getExitCode()}): " . $dumpProcess->getErrorOutput());
+            }
+            if (!File::exists($backupFile) || filesize($backupFile) === 0) {
+                throw new \RuntimeException('pg_dump produced no output file.');
+            }
+            // A complete plain-format dump ends with this marker. A truncated or empty dump never has it.
+            $tail = (string) file_get_contents($backupFile, false, null, max(0, filesize($backupFile) - 4096));
+            if (!str_contains($tail, 'PostgreSQL database dump complete')) {
+                throw new \RuntimeException('pg_dump output is incomplete (completion marker missing).');
+            }
+
+            // Compress in PHP as a byte-for-byte copy. The dump is never edited: filtering lines can drop real
+            // data rows. Use pg_dump/psql clients whose major version matches the server (see the guide).
+            $in = fopen($backupFile, 'rb');
+            $gz = gzopen($compressedFile, 'wb9');
+            if ($in === false || $gz === false) {
+                throw new \RuntimeException('Could not open files to compress the dump.');
+            }
+            while (!feof($in)) {
+                $chunk = fread($in, 1048576);
+                if ($chunk === false || ($chunk !== '' && gzwrite($gz, $chunk) === false)) {
+                    throw new \RuntimeException('Compressing the dump failed.');
+                }
+            }
+            fclose($in);
+            gzclose($gz);
+
+            if (!File::exists($compressedFile) || filesize($compressedFile) === 0) {
+                throw new \RuntimeException('Compressed backup is missing or empty.');
             }
 
             $fileSize = filesize($compressedFile);
@@ -114,7 +136,7 @@ class VerifyDatabaseBackupCommand extends Command
 
             // STEP 3: Verify archive integrity
             $this->line("3. Verifying archive integrity...");
-            $gzipTest = Process::fromShellCommandline(sprintf('gzip -t %s', escapeshellarg($compressedFile)));
+            $gzipTest = new Process(['gzip', '-t', $compressedFile]);
             $gzipTest->run();
 
             if (!$gzipTest->isSuccessful()) {
@@ -131,29 +153,39 @@ class VerifyDatabaseBackupCommand extends Command
             // STEP 5: Restore backup into isolated temporary database
             $this->line("5. Restoring actual backup into isolated temporary database...");
 
-            $restoreCmd = sprintf(
-                'gunzip -c %s | PGPASSWORD=%s psql -h %s -p %s -U %s -d %s -v ON_ERROR_STOP=1',
-                escapeshellarg($compressedFile),
-                escapeshellarg($dbPassword),
-                escapeshellarg($dbHost),
-                escapeshellarg((string) $dbPort),
-                escapeshellarg($dbUser),
-                escapeshellarg($tempDbName)
-            );
+            // Decompress to a plain file, then run psql on it directly (no shell pipeline, exit code checked).
+            $restoreSql = "{$backupFile}.restore.sql";
+            $gzIn = gzopen($compressedFile, 'rb');
+            $out = fopen($restoreSql, 'wb');
+            if ($gzIn === false || $out === false) {
+                throw new \RuntimeException('Could not open the archive to restore it.');
+            }
+            while (!gzeof($gzIn)) {
+                $chunk = gzread($gzIn, 1048576);
+                if ($chunk === false) {
+                    throw new \RuntimeException('Reading the archive failed.');
+                }
+                fwrite($out, $chunk);
+            }
+            gzclose($gzIn);
+            fclose($out);
 
-            $restoreProcess = Process::fromShellCommandline($restoreCmd);
+            $restoreProcess = new Process([
+                'psql', '-h', (string) $dbHost, '-p', (string) $dbPort, '-U', (string) $dbUser,
+                '-d', $tempDbName, '-v', 'ON_ERROR_STOP=1', '-f', $restoreSql,
+            ], null, $pgEnv);
             $restoreProcess->setTimeout(180);
             $restoreProcess->run();
 
             if (!$restoreProcess->isSuccessful()) {
-                throw new \RuntimeException("Restore into temporary database failed: " . $restoreProcess->getErrorOutput());
+                throw new \RuntimeException("Restore into temporary database failed (exit {$restoreProcess->getExitCode()}): " . $restoreProcess->getErrorOutput());
             }
             $this->info("   Backup restored into '{$tempDbName}' successfully.");
 
             // STEP 6: Connect to isolated database and verify parity
             $this->line("6. Verifying schema, tables, indexes, constraints, and representative row counts...");
 
-            $dsn = "pgsql:host={$dbHost};port={$dbPort};dbname={$tempDbName}";
+            $dsn = "pgsql:host={$dbHost};port={$dbPort};dbname={$tempDbName};sslmode={$dbSslMode}";
             $tempPdo = new PDO($dsn, $dbUser, $dbPassword, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 
             // 6a. Verify Tables
@@ -207,7 +239,7 @@ class VerifyDatabaseBackupCommand extends Command
 
             $this->info("   All parity checks passed: " . count($tempTables) . " tables, " .
                 count($tempIndexes) . " indexes, " . count($tempFks) . " foreign keys, " .
-                count($tempSequences) . " sequences, and row counts identical across " . count($primaryCounts) . " representative tables.");
+                count($tempSequences) . " sequences, and row counts identical across " . count($primaryCounts) . " tables (all public tables).");
 
             unset($tempPdo); // close connection
 
@@ -237,6 +269,7 @@ class VerifyDatabaseBackupCommand extends Command
             if (File::exists($backupFile)) File::delete($backupFile);
             if (File::exists($compressedFile)) File::delete($compressedFile);
             if (File::exists($checksumFile)) File::delete($checksumFile);
+            if (File::exists("{$backupFile}.restore.sql")) File::delete("{$backupFile}.restore.sql");
             $this->info("   Temporary backup archives purged.");
         }
     }

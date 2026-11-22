@@ -110,11 +110,12 @@ class IntegrationTest extends TestCase
         $sessionKey = "discovered_accounts:meta:{$this->owner->id}";
         $rawAccessToken = 'EAA_super_secret_meta_user_access_token_12345';
 
-        Cache::put($sessionKey, [
+        // Same shape the callback stores: encrypted JSON with ISO dates, safe for a database/redis cache.
+        Cache::put($sessionKey, \Illuminate\Support\Facades\Crypt::encryptString(json_encode([
             'token_data' => [
                 'access_token' => $rawAccessToken,
                 'refresh_token' => null,
-                'expires_at' => now()->addDays(60),
+                'expires_at' => now()->addDays(60)->format(DATE_ATOM),
             ],
             'accounts' => [
                 [
@@ -125,7 +126,8 @@ class IntegrationTest extends TestCase
                     'timezone' => 'America/New_York',
                 ],
             ],
-        ], 600);
+        ])), 600);
+        $this->assertStringNotContainsString($rawAccessToken, (string) Cache::get($sessionKey));
 
         $response = $this->withHeader('Authorization', "Bearer {$this->token}")
                          ->postJson('/api/v1/integrations/meta/connect', [

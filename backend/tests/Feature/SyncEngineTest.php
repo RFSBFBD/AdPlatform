@@ -68,6 +68,20 @@ class SyncEngineTest extends TestCase
         });
     }
 
+    public function test_sync_driver_runs_inline_and_never_reports_queued(): void
+    {
+        config(['queue.default' => 'sync']);
+        Http::fake(['*' => Http::response(['error' => 'down'], 500)]);
+
+        $response = $this->actingAs($this->user, 'sanctum')
+            ->postJson("/api/v1/ad-accounts/{$this->account->id}/sync", ['sync_type' => 'manual']);
+
+        $response->assertStatus(200);
+        $this->assertNotSame('queued', $response->json('status'));
+        $this->assertNotNull($response->json('sync_run'));
+        $this->assertSame($response->json('status'), $response->json('sync_run.status'));
+    }
+
     public function test_sync_engine_normalizes_data_calculates_metrics_and_audits(): void
     {
         // Mock provider adapter

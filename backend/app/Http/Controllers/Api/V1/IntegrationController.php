@@ -9,6 +9,7 @@ use App\Services\Advertising\OAuthManager;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use Throwable;
 
 class IntegrationController extends Controller
@@ -90,10 +91,16 @@ class IntegrationController extends Controller
 
             // Cache discovered accounts for import
             $sessionKey = "discovered_accounts:{$provider}:{$request->user()->id}";
-            Cache::put($sessionKey, [
-                'token_data' => $tokenData,
+            // Shared cache stores (database, redis) serialize without objects, and the payload holds provider tokens.
+            // Dates become ISO strings and the whole payload is stored encrypted, never as plain text.
+            $tokenForCache = array_map(
+                fn ($v) => $v instanceof \DateTimeInterface ? $v->format(DATE_ATOM) : $v,
+                $tokenData
+            );
+            Cache::put($sessionKey, Crypt::encryptString(json_encode([
+                'token_data' => $tokenForCache,
                 'accounts' => $discoveredAccounts,
-            ], 1800);
+            ], JSON_THROW_ON_ERROR)), 1800);
 
             return response()->json([
                 'success' => true,
@@ -127,6 +134,13 @@ class IntegrationController extends Controller
 
         $sessionKey = "discovered_accounts:{$provider}:{$request->user()->id}";
         $cachedSession = Cache::get($sessionKey);
+        if (is_string($cachedSession)) {
+            try {
+                $cachedSession = json_decode(Crypt::decryptString($cachedSession), true, 512, JSON_THROW_ON_ERROR);
+            } catch (Throwable) {
+                $cachedSession = null;
+            }
+        }
 
         if (!$cachedSession) {
             return response()->json([
