@@ -1,6 +1,7 @@
 import { parseOAuthCallback, OAUTH_PROVIDER_KEY } from './oauth-callback';
 import { ProviderSetupGuideComponent } from './provider-setup-guide.component';
-import { Component, inject, OnInit, signal, OnDestroy } from '@angular/core';
+import { ProviderAppConfigComponent, ProviderConfigDto, ProviderId, createDefaultConfig } from './provider-app-config.component';
+import { Component, computed, inject, OnInit, signal, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { ButtonComponent } from '../../shared/components/button/button.component';
@@ -10,6 +11,7 @@ import { ModalComponent } from '../../shared/components/modal/modal.component';
 import { classifySync, SYNC_PILL, SyncKind } from './sync-outcome';
 import { DataCoverageComponent } from './data-coverage.component';
 import { IconComponent } from '../../shared/components/icon/icon.component';
+import { AuthService } from '../../core/services/auth.service';
 
 export interface ConnectedAccountDto {
   id: number;
@@ -37,114 +39,105 @@ export interface SyncRunDto {
 @Component({
   selector: 'app-accounts-feature',
   standalone: true,
-  imports: [CommonModule, ButtonComponent, BadgeComponent, EmptyStateComponent, ModalComponent, IconComponent, DataCoverageComponent, ProviderSetupGuideComponent],
+  imports: [CommonModule, ButtonComponent, BadgeComponent, EmptyStateComponent, ModalComponent, IconComponent, DataCoverageComponent, ProviderSetupGuideComponent, ProviderAppConfigComponent],
   template: `
     <div class="accounts-page">
       <div class="page-header">
         <div>
-          <h2 class="title">Connected Advertising Accounts</h2>
-          <p class="subtitle">Connect your advertising accounts here. Meta, Google and TikTok connection code exists and has not been run against live accounts. Snapchat is added with reporting at account level only, also not run live.</p>
+          <h2 class="title">Integrations &amp; Connected Accounts</h2>
+          <p class="subtitle">One journey per platform: Step 1 stores this platform's developer app credentials (admin only, once per platform); Step 2 connects an ad account with OAuth. Ad data always comes from the connected account's own access, never from Step 1. Meta, Google and TikTok connection code exists and has not been run against live accounts; Snapchat reports at account level only, also not run live.</p>
         </div>
       </div>
 
 
-      <!-- Provider Connect Cards -->
+      <!-- Unified integration journey: Step 1 (admin) sets up the platform's developer app, Step 2 connects an ad account -->
+      @if (canManageDevelopers() && devConfigStatus() === 'error') {
+        <p class="admin-note">
+          Could not load the platform app setup status, so it is unknown, not necessarily missing. Step 2 stays available.
+          <button type="button" class="retry-btn" (click)="fetchDevConfigs()">Retry</button>
+        </p>
+      }
       <div class="providers-grid">
-        <!-- Meta Ads -->
-        <div class="provider-card">
+        @for (p of providers; track p.id) {
+          <div class="provider-card">
+            <div class="provider-header">
+              <div class="provider-badge-icon">
+                <app-icon [name]="p.id" [size]="p.iconSize"></app-icon>
+              </div>
+              <div>
+                <span class="provider-name">{{ p.name }}</span>
+                <span class="provider-type">{{ p.type }}</span>
+              </div>
+            </div>
+            <p class="provider-desc">{{ p.desc }}</p>
+
+            @if (canManageDevelopers()) {
+              <app-provider-app-config [provider]="p.id" [(config)]="devConfigs[p.id]" [configStatus]="devConfigStatus()"></app-provider-app-config>
+            } @else {
+              <p class="admin-note">Step 1 (platform app setup) is managed by your administrator. You only connect an ad account in Step 2.</p>
+            }
+
+            <div class="card-footer">
+              <span class="connect-step-label">Step 2 · Connect an ad account</span>
+              <app-button
+                variant="primary"
+                size="sm"
+                [loading]="connectingProvider() === p.id"
+                [disabled]="isConnectDisabled(p.id)"
+                (clicked)="initiateConnect(p.id)"
+              >
+                <app-icon name="plus" [size]="14"></app-icon>
+                <span>Connect {{ p.name }} Account</span>
+              </app-button>
+              @if (isConnectDisabled(p.id)) {
+                <span class="field-hint">Finish Step 1 first: the provider rejects sign-in until the app credentials are saved.</span>
+              }
+            </div>
+            <app-provider-setup-guide [providerId]="p.id"></app-provider-setup-guide>
+          </div>
+        }
+      </div>
+
+      <!-- Reporting integration: Looker Studio connector (kept from the retired Developer API Hub page) -->
+      <div class="section-container">
+        <div class="section-header">
+          <h3 class="section-title">Reporting Integration</h3>
+        </div>
+        <div class="provider-card looker-highlight">
           <div class="provider-header">
             <div class="provider-badge-icon">
-              <app-icon name="meta" [size]="28"></app-icon>
+              <app-icon name="looker" [size]="24"></app-icon>
             </div>
             <div>
-              <span class="provider-name">Meta Ads</span>
-              <span class="provider-type">Facebook & Instagram</span>
+              <span class="provider-name">Google Looker Studio Connector</span>
+              <span class="provider-type">Unified metrics from your synced accounts</span>
             </div>
+            <app-badge [variant]="lookerTestStatus() === 'connected' ? 'success' : (lookerTestStatus() === 'error' ? 'danger' : 'neutral')">
+              {{ lookerTestStatus() === 'connected' ? 'SCHEMA VERIFIED' : (lookerTestStatus() === 'error' ? 'CHECK FAILED' : 'NOT VERIFIED') }}
+            </app-badge>
           </div>
-          <p class="provider-desc">Connect Ad Accounts and Business assets via official Meta Marketing API.</p>
-          <div class="card-footer">
-            <app-button 
-              variant="primary" 
-              size="sm" 
-              [loading]="connectingProvider() === 'meta'"
-              (clicked)="initiateConnect('meta')"
-            >
-              <app-icon name="plus" [size]="14"></app-icon>
-              <span>Connect Meta Account</span>
+          <p class="provider-desc">Serves unified cross-channel performance metrics to Looker Studio dashboards. Data freshness follows the last account sync (sync is manual); press Verify to check the endpoint before relying on it.</p>
+          <div>
+            <span class="connect-step-label">Connector data endpoint</span>
+            <div class="url-copy-box">
+              <input type="text" readonly [value]="lookerEndpointUrl" class="looker-url-input" />
+              <app-button variant="outline" size="sm" (clicked)="copyLookerEndpoint()">
+                <app-icon name="copy" [size]="14"></app-icon>
+                <span>{{ copiedLookerUrl() ? 'Copied!' : 'Copy URL' }}</span>
+              </app-button>
+            </div>
+            <span class="field-hint">Use this HTTPS endpoint in a Looker Studio Community Connector or Apps Script. Requires authenticated connector setup. Schema dimensions: date, provider, account_name, campaign_name, currency. Metrics: spend, clicks, impressions, conversions, conversion_value, roas, cpc. Verification checks schema only, not data freshness or completed Looker setup.</span>
+          </div>
+          <div class="card-footer looker-actions">
+            <app-button variant="primary" size="sm" [loading]="isTestingLooker()" (clicked)="testLookerEndpoint()">
+              <app-icon name="sync" [size]="14"></app-icon>
+              <span>Verify Looker Endpoint</span>
             </app-button>
+            <a href="https://lookerstudio.google.com" target="_blank" rel="noopener noreferrer" class="looker-portal-btn">
+              <app-icon name="external-link" [size]="14"></app-icon>
+              <span>Open Looker Studio</span>
+            </a>
           </div>
-          <app-provider-setup-guide providerId="meta"></app-provider-setup-guide>
-        </div>
-
-        <!-- Google Ads -->
-        <div class="provider-card">
-          <div class="provider-header">
-            <div class="provider-badge-icon">
-              <app-icon name="google" [size]="28"></app-icon>
-            </div>
-            <div>
-              <span class="provider-name">Google Ads</span>
-              <span class="provider-type">Search, YouTube, Display</span>
-            </div>
-          </div>
-          <p class="provider-desc">Connect customer accounts or MCC managers via official Google Ads API.</p>
-          <div class="card-footer">
-            <app-button 
-              variant="primary" 
-              size="sm" 
-              [loading]="connectingProvider() === 'google'"
-              (clicked)="initiateConnect('google')"
-            >
-              <app-icon name="plus" [size]="14"></app-icon>
-              <span>Connect Google Account</span>
-            </app-button>
-          </div>
-          <app-provider-setup-guide providerId="google"></app-provider-setup-guide>
-        </div>
-
-        <!-- TikTok Ads -->
-        <div class="provider-card">
-          <div class="provider-header">
-            <div class="provider-badge-icon">
-              <app-icon name="tiktok" [size]="28"></app-icon>
-            </div>
-            <div>
-              <span class="provider-name">TikTok Ads</span>
-              <span class="provider-type">TikTok for Business</span>
-            </div>
-          </div>
-          <p class="provider-desc">Connect advertiser accounts via official TikTok Marketing API.</p>
-          <div class="card-footer">
-            <app-button 
-              variant="primary" 
-              size="sm" 
-              [loading]="connectingProvider() === 'tiktok'"
-              (clicked)="initiateConnect('tiktok')"
-            >
-              <app-icon name="plus" [size]="14"></app-icon>
-              <span>Connect TikTok Account</span>
-            </app-button>
-          </div>
-          <app-provider-setup-guide providerId="tiktok"></app-provider-setup-guide>
-        </div>
-
-        <!-- Snapchat Ads -->
-        <div class="provider-card">
-          <div class="provider-header">
-            <div class="provider-badge-icon"><app-icon name="snapchat" [size]="22"></app-icon></div>
-            <div>
-              <span class="provider-name">Snapchat Ads</span>
-              <span class="provider-type">Snap Marketing API</span>
-            </div>
-          </div>
-          <p class="provider-desc">Connect Snap ad accounts through the official Snap Marketing API. Daily account-level spend, swipes and purchase value (Snap Pixel only).</p>
-          <div class="card-footer">
-            <app-button variant="primary" size="sm" [loading]="connectingProvider() === 'snapchat'" (clicked)="initiateConnect('snapchat')">
-              <app-icon name="plus" [size]="14"></app-icon>
-              <span>Connect Snapchat Account</span>
-            </app-button>
-          </div>
-          <app-provider-setup-guide providerId="snapchat"></app-provider-setup-guide>
         </div>
       </div>
 
@@ -386,7 +379,8 @@ export interface SyncRunDto {
 
     .providers-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+      align-items: start;
       gap: 1.25rem;
     }
 
@@ -452,6 +446,89 @@ export interface SyncRunDto {
     .card-footer {
       margin-top: auto;
       padding-top: 0.5rem;
+    }
+
+    .connect-step-label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-main);
+      margin-bottom: 0.375rem;
+    }
+
+    .field-hint {
+      display: block;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 0.375rem;
+    }
+
+    .admin-note {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-style: italic;
+      border: 1px dashed var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 0.5rem 0.75rem;
+    }
+
+    .retry-btn {
+      margin-left: 0.5rem;
+      background: none;
+      border: none;
+      padding: 0;
+      color: var(--primary);
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+
+    .provider-header app-badge {
+      margin-left: auto;
+    }
+
+    .looker-highlight {
+      border-color: rgba(66, 133, 244, 0.35);
+      background: linear-gradient(180deg, rgba(66, 133, 244, 0.05) 0%, var(--bg-surface) 100%);
+    }
+
+    .url-copy-box {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      margin-top: 0.25rem;
+    }
+
+    .looker-url-input {
+      flex: 1;
+      font-size: 0.8125rem;
+      font-family: monospace;
+      min-width: 0;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      background: var(--bg-subtle);
+      color: var(--text-main);
+    }
+
+    .looker-actions {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .looker-portal-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      font-size: 0.8125rem;
+      color: #60a5fa;
+      padding: 0.375rem 0.75rem;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(96, 165, 250, 0.3);
+      text-decoration: none;
     }
 
     .section-container {
@@ -799,9 +876,97 @@ export class AccountsFeatureComponent implements OnInit, OnDestroy {
   readonly selectedIds = signal<string[]>([]);
   readonly isConnecting = signal<boolean>(false);
 
+  private readonly authService = inject(AuthService);
+
+  // Unified integration journey: developer app config (Step 1, admin-only via
+  // manage-developers, enforced again by the backend) sits next to account
+  // connection (Step 2). Ad data always comes from the OAuth-connected account
+  // in Step 2; Step 1 only identifies this platform's app at the provider.
+  readonly canManageDevelopers = computed(() => this.authService.hasPermission('manage-developers'));
+  readonly devConfigStatus = signal<'loading' | 'loaded' | 'error'>('loading');
+  readonly devConfigs: Record<ProviderId, ProviderConfigDto> = {
+    meta: createDefaultConfig('meta'),
+    google: createDefaultConfig('google'),
+    tiktok: createDefaultConfig('tiktok'),
+    snapchat: createDefaultConfig('snapchat'),
+  };
+
+  readonly providers: { id: ProviderId; name: string; type: string; desc: string; iconSize: number }[] = [
+    { id: 'meta', name: 'Meta Ads', type: 'Facebook & Instagram', desc: 'Connect Ad Accounts and Business assets via official Meta Marketing API.', iconSize: 28 },
+    { id: 'google', name: 'Google Ads', type: 'Search, YouTube, Display', desc: 'Connect customer accounts or MCC managers via official Google Ads API.', iconSize: 28 },
+    { id: 'tiktok', name: 'TikTok Ads', type: 'TikTok for Business', desc: 'Connect advertiser accounts via official TikTok Marketing API.', iconSize: 28 },
+    { id: 'snapchat', name: 'Snapchat Ads', type: 'Snap Marketing API', desc: 'Connect Snap ad accounts through the official Snap Marketing API. Daily account-level spend, swipes and purchase value (Snap Pixel only).', iconSize: 22 },
+  ];
+
+  // Looker Studio connector (kept from the retired Developer API Hub page)
+  readonly lookerTestStatus = signal<'untested' | 'connected' | 'error'>('untested');
+  readonly isTestingLooker = signal<boolean>(false);
+  readonly copiedLookerUrl = signal<boolean>(false);
+  readonly lookerEndpointUrl = `${window.location.origin}/api/v1/reporting/looker-studio`;
+
+  isAppConfigured(id: ProviderId): boolean {
+    const cfg = this.devConfigs[id];
+    const base = !!cfg.app_id && cfg.has_secret;
+    return id === 'google' ? base && cfg.has_developer_token : base;
+  }
+
+  // Connect is gated only on a successfully loaded config state. A failed load
+  // means "unknown", never "verified missing", so it must not block Step 2.
+  isConnectDisabled(id: ProviderId): boolean {
+    return this.devConfigStatus() === 'loaded' && this.canManageDevelopers() && !this.isAppConfigured(id);
+  }
+
+  fetchDevConfigs(): void {
+    this.devConfigStatus.set('loading');
+    this.http.get<{ success: boolean; data: ProviderConfigDto[] }>('/api/v1/admin/developer-configs').subscribe({
+      next: (res) => {
+        if (res?.success && Array.isArray(res.data) && this.providers.every(p => res.data.some(c => c.provider === p.id))) {
+          for (const item of res.data) {
+            if (item.provider in this.devConfigs) {
+              this.devConfigs[item.provider] = item;
+            }
+          }
+          this.devConfigStatus.set('loaded');
+        } else {
+          this.devConfigStatus.set('error');
+        }
+      },
+      error: () => { this.devConfigStatus.set('error'); }
+    });
+  }
+
+  async copyLookerEndpoint(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(this.lookerEndpointUrl);
+      this.copiedLookerUrl.set(true);
+      setTimeout(() => this.copiedLookerUrl.set(false), 3000);
+    } catch {
+      this.copiedLookerUrl.set(false);
+      this.showModal('Copy not available', 'Select and copy the endpoint address from the field.');
+    }
+  }
+
+  testLookerEndpoint(): void {
+    this.isTestingLooker.set(true);
+    this.http.get<{ schema: any[] }>('/api/v1/reporting/looker-studio?schema=true').subscribe({
+      next: (res) => {
+        this.isTestingLooker.set(false);
+        // Verified only on an actual non-empty schema response; anything else is a failed check.
+        this.lookerTestStatus.set(Array.isArray(res?.schema) && res.schema.length > 0 ? 'connected' : 'error');
+      },
+      error: () => {
+        this.isTestingLooker.set(false);
+        this.lookerTestStatus.set('error');
+      }
+    });
+  }
+
   ngOnInit(): void {
     this.fetchAccounts();
     this.handleOAuthReturn();
+    if (this.canManageDevelopers()) {
+      this.fetchDevConfigs();
+    }
   }
 
   private handleOAuthReturn(): void {

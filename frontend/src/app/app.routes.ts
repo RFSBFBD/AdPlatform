@@ -43,8 +43,10 @@ export const routes: Routes = [
         loadComponent: () => import('./features/ai-center/ai-center.component').then(m => m.AiCenterFeatureComponent)
       },
       {
+        // Retired as a separate page: developer app setup now lives as Step 1
+        // inside the unified Integrations & Connected Accounts page.
         path: 'developer-settings',
-        loadComponent: () => import('./features/developer-settings/developer-settings.component').then(m => m.DeveloperSettingsFeatureComponent)
+        redirectTo: 'accounts'
       },
       {
         path: 'team',

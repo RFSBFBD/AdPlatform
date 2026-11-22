@@ -18,6 +18,7 @@ import { PROVIDER_GUIDES, ProviderGuide } from './provider-guides';
         <p class="guide-state">{{ g.built ? 'Connection code exists in this platform (not yet run against a live provider).' : 'Not built in this platform yet. This only prepares your account.' }}</p>
         <p><a [href]="g.portalUrl" target="_blank" rel="noopener noreferrer">Open: {{ g.portalLabel }}</a></p>
         <ol>@for (st of g.steps; track st) { <li>{{ st }}</li> }</ol>
+        <p>Developer app creation and credential setup are for the administrator. Account owners then approve access using Connect in Step 2. Never share App Secrets or tokens in chat.</p>
         <strong>You need</strong>
         <ul>@for (n of g.needs; track n) { <li>{{ n }}</li> }</ul>
         <strong>Limits</strong>

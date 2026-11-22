@@ -387,9 +387,9 @@ export class RouteProgressBarComponent implements OnInit, OnDestroy {
     } else if (url.includes('ai-center')) {
       this.destinationTitle.set('AI Intelligence & Model Hub');
       this.statusMessage.set('Connecting active model gateways...');
-    } else if (url.includes('developer-settings')) {
-      this.destinationTitle.set('Developer API Hub & Looker');
-      this.statusMessage.set('Verifying API handshakes...');
+    } else if (url.includes('accounts')) {
+      this.destinationTitle.set('Integrations & Connected Accounts');
+      this.statusMessage.set('Checking platform app setup and account connections...');
     } else if (url.includes('team')) {
       this.destinationTitle.set('Team & Access Management');
       this.statusMessage.set('Loading role-based permissions...');

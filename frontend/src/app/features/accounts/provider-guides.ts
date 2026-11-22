@@ -28,7 +28,7 @@ export const PROVIDER_GUIDES: Record<ProviderGuide['id'], ProviderGuide> = {
       'Open the portal, sign in with a TikTok For Business account and choose Become a Developer.',
       'After the developer profile is approved, choose Create an App for the Marketing API (not TikTok Shop).',
       'Set the Advertiser redirect URL to this platform\'s callback address and pick read scopes for campaigns and reports.',
-      'Save the App ID and Secret in Developer API Hub on this platform, then press Connect and approve as the advertiser.',
+      'Save the App ID and Secret in Step 1 (admin only) on this page, then press Connect and approve as the advertiser.',
     ],
     needs: ['A TikTok For Business account', 'A company email on a verified company domain and a public company website (registration asks for both)'],
     limits: ['TikTok Shop Partner Center is a different product and its keys do not work here.', 'Developer and app approval is manual and its duration is not published.'],
@@ -45,7 +45,7 @@ export const PROVIDER_GUIDES: Record<ProviderGuide['id'], ProviderGuide> = {
     steps: [
       'Create a Meta developer app and add the Marketing API.',
       'Link the app to the Business that owns the ad account.',
-      'Save the App ID and Secret in Developer API Hub, then press Connect and approve with a user who has access to the ad account.',
+      'Save the App ID and Secret in Step 1 (admin only) on this page, then press Connect and approve with a user who has access to the ad account.',
     ],
     needs: ['A Meta developer app', 'A user with access to the ad account'],
     limits: ['Reading data that you do not own needs Meta App Review and Business Verification (Advanced Access).', 'Your own ad accounts can work in Standard Access; check the page above.'],
@@ -59,7 +59,7 @@ export const PROVIDER_GUIDES: Record<ProviderGuide['id'], ProviderGuide> = {
     steps: [
       'Create a Google Ads manager account (needed to get a developer token) and request the token in API Center.',
       'Create a Google Cloud project and OAuth credentials.',
-      'Save the client ID, secret and developer token in Developer API Hub, then press Connect.',
+      'Save the client ID, secret and developer token in Step 1 (admin only) on this page, then press Connect.',
     ],
     needs: ['A Google Ads manager account', 'A working company website URL and a monitored API contact email for the token application'],
     limits: ['The developer token has an access level that limits daily calls.', 'When access is through a manager account, its customer ID is required.'],
