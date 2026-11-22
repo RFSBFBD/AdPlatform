@@ -45,7 +45,7 @@ flowchart TD
 ### Step 1: Notify Operations & Set Maintenance Page
 If Nginx is reachable, place temporary 503 maintenance mode:
 ```bash
-docker exec ad_platform_prod_backend php artisan down --secret="ops-bypass-key" --render="errors::503"
+docker exec ad_platform_prod_backend php artisan down --secret="<choose-a-unique-bypass-token>" --render="errors::503"
 ```
 
 ### Step 2: Roll Back Database Schema (If Migrations Were Run)

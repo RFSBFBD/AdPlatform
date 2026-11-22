@@ -29,3 +29,7 @@ redis_data/
 .idea/
 .vscode/
 .neon
+
+# Backups and Local Assets
+backups/
+brand-assets/

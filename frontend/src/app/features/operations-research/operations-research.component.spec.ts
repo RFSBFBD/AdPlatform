@@ -107,6 +107,42 @@ describe('OperationsResearchComponent honesty', () => {
     expect(el.querySelector('.or-status')?.textContent).toContain('No allocation');
   });
 
+  it('keeps budget bar amounts readable outside the bar track', () => {
+    const { f, http } = setup();
+    flushFirst(http);
+    const c = f.componentInstance as any;
+    c.targetBudget.set(9000); c.horizon.set('per_30_days'); c.saturation.set(2);
+    c.solveOptimization();
+    const alloc = (channel: string, display_name: string, cur: number, opt: number, action: string, pct: number) => ({
+      channel, display_name, current_spend: cur, current_revenue: cur * 2, current_roas: 2,
+      optimal_spend: opt, optimal_revenue: opt * 2, optimal_roas: 2,
+      delta_spend: opt - cur, delta_spend_percentage: pct, delta_vs_baseline: opt - cur,
+      delta_vs_baseline_percentage: pct, lift_vs_baseline: 0,
+      marginal_roas_current: 1.5, marginal_roas_optimal: 1.5, action,
+    });
+    http.expectOne((r) => r.url.startsWith('/api/v1/analytics/operations-research')).flush({
+      success: true, data: {
+        status: 'ok', total_budget: 9000, current_total_revenue: 21000, current_blended_roas: 2.33,
+        optimal_total_revenue: 21395, optimal_blended_roas: 2.38, revenue_gain_delta: 395,
+        roas_gain_delta: 0.05, revenue_gain_percentage: 1.88, equilibrium_lambda: 1.587,
+        channel_allocations: [
+          alloc('meta', 'Meta Ads', 3000, 4169, 'SCALE_UP', 39),
+          alloc('google', 'Google Ads', 6000, 4831, 'SCALE_DOWN', -19.5),
+        ],
+        recommendations: [], frontier_curve: [], sensitivity_points: {}, mathematical_model: 'x',
+        comparison: { observed_spend: 9000, observed_revenue_on_curve: 21000, reference_spend: 9000, baseline_revenue_same_spend: 21000, baseline_roas_same_spend: 2.33, reallocation_gain: 395, spend_change_vs_observed: 0, revenue_change_vs_observed: 395, definition: 'x' },
+      },
+    });
+    f.detectChanges();
+    const el: HTMLElement = f.nativeElement;
+    const values = el.querySelectorAll('.bar-value');
+    expect(values.length).toBe(4);
+    // Amounts must live outside the colored bar track so they stay readable at any bar width.
+    expect(el.querySelector('.bar-track .bar-value')).toBeNull();
+    values.forEach((v) => expect(v.parentElement!.classList.contains('bar-row')).toBe(true));
+    expect(el.querySelector('.bars-container')!.textContent).toContain('4,169');
+  });
+
   it('says a channel minimum exceeds the budget', () => {
     const { f, http } = setup();
     flushFirst(http);

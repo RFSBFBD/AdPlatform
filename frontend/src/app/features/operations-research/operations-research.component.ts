@@ -77,7 +77,7 @@ export interface OperationsResearchData {
             <span class="math-badge">Deterministic solver on an assumed response curve (estimate)</span>
           </div>
           <p class="subtitle">
-            Non-linear diminishing marginal returns algorithm solves optimal cross-channel capital allocation across the channels with enough data (Meta, Google, TikTok, Snapchat) without stochastic LLM variation.
+Suggests how to split one budget across your channels (Meta, Google, TikTok, Snapchat) using a deterministic solver on an assumed response curve you set. The result is an estimate from your data and that assumption, not a forecast, and it never changes your campaigns.
           </p>
         </div>
 
@@ -304,14 +304,18 @@ export interface OperationsResearchData {
 
                   <div class="comparative-bars">
                     <!-- Current Bar -->
-                    <div class="bar-track">
-                      <div class="bar-fill current" [style.width.%]="getBarPercent(c.current_spend)"></div>
+                    <div class="bar-row">
+                      <div class="bar-track">
+                        <div class="bar-fill current" [style.width.%]="getBarPercent(c.current_spend)"></div>
+                      </div>
                       <span class="bar-value">{{ c.current_spend | number:'1.0-0' }}</span>
                     </div>
 
                     <!-- Optimal Bar -->
-                    <div class="bar-track">
-                      <div class="bar-fill optimal" [style.width.%]="getBarPercent(c.optimal_spend)"></div>
+                    <div class="bar-row">
+                      <div class="bar-track">
+                        <div class="bar-fill optimal" [style.width.%]="getBarPercent(c.optimal_spend)"></div>
+                      </div>
                       <span class="bar-value highlight">{{ c.optimal_spend | number:'1.0-0' }}</span>
                     </div>
                   </div>
@@ -711,15 +715,24 @@ export interface OperationsResearchData {
       }
     }
 
+    .bar-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .bar-row .bar-track {
+      flex: 1 1 auto;
+    }
     .bar-value {
-      position: absolute;
-      right: 8px;
-      font-size: 0.6875rem;
+      flex: 0 0 auto;
+      min-width: 3.5rem;
+      text-align: right;
+      font-size: 0.75rem;
       font-weight: 700;
-      color: #f8fafc;
+      color: var(--text-main);
 
       &.highlight {
-        color: #ffffff;
+        color: var(--primary);
       }
     }
 

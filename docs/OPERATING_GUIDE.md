@@ -1,16 +1,15 @@
-# AdPlatform experimental checkpoint (v7): operating guide
+# AdPlatform operating guide
 
-Status: an EXPERIMENTAL checkpoint, tested locally only. Not the finished platform. Nothing was deployed, pushed, connected to ad accounts, or run with real keys or money.
-Base: commit cc14391153b1fbf30f9f8c27e2815039e949852b. This repo state = base + the cumulative patch.
+Status: the OR-centric cleanup of November 2026 is the current version. README.md (Arabic) is the authoritative overview; this guide keeps the operating and OR-contract details. The platform is deployed at https://ad-platform-alpha.vercel.app (frontend + backend on Vercel, Neon Postgres), but no ad account was ever connected, no OAuth flow ran against a real provider, and no real AI model key was used.
 
 ## Apply
-- From the base commit: `git apply adplatform-changes-v7.patch` (patch SHA-256 is in the delivery message), or use the full source archive.
-- Backend: `composer install`, copy `.env.example` to `.env`, `php artisan key:generate`. Frontend: `npm ci`, `ng build`.
-- Deploy later: read docs/DEPLOY_LATER.md. Rotate the admin account if the old built-in default admin credentials were ever used on a real instance (the seeder no longer has any; set ADMIN_BOOTSTRAP_EMAIL / ADMIN_BOOTSTRAP_PASSWORD in the server env for the first owner).
+- Use the full source archive of this version. Backend: `composer install`, copy `.env.example` to `.env`, `php artisan key:generate`, `php artisan migrate`. Frontend: `npm ci`, `ng build`.
+- First owner: set ADMIN_BOOTSTRAP_EMAIL / ADMIN_BOOTSTRAP_PASSWORD in the server env before seeding (the seeder has no built-in password and never overwrites an existing account).
+- Production notes: read docs/DEPLOY_LATER.md.
 
 ## Run the tests
-- Backend: `php vendor/bin/phpunit` (PostgreSQL per phpunit.xml). My local runs used php-wasm 8.5 with a SQLite file and the OAuth/Tenancy/Auth setUp calling the seeder directly (no artisan).
-- Frontend: `ng test --watch=false` (27 tests) and `ng build`.
+- Backend: `php vendor/bin/phpunit` (PostgreSQL per phpunit.xml). Current version: 184 tests / 1867 assertions, all green on native PostgreSQL 16.2 + FrankenPHP 1.14 / PHP 8.6 (independent review, 2026-11-22). Migrations also run on SQLite for local testing.
+- Frontend: `ng test` (56 tests, all green) and `ng build`.
 
 ## What the Operations Research (OR) function does
 - Objective: maximise total platform-reported revenue over Meta, Google and TikTok under a total budget, with R_i(S) = alpha_i (1 - exp(-beta_i S)); alpha_i = saturation_multiplier x observed revenue. The curve is an assumption you state, not a fitted or validated model.
@@ -28,9 +27,9 @@ Honest login (no preview session), AI analysis computed server-side per provider
 ## Open, not done, or unverified
 - X (Twitter): not implemented. Open requirement.
 - OAuth: code and tests only; never run against a real provider; no provider approvals.
-- No live backend exists on the Vercel site; end-to-end behaviour is unverified.
-- PostgreSQL suite not run. One test (Tenancy analytics overview) fails under SQLite on the base commit too.
-- OR screen has controls for budget, period, saturation, budget mode (exact / at_most), minimum marginal ROAS and per-channel min/max with their own period, with client-side validation. Min marginal ROAS is accepted only with at_most (the screen disables it otherwise, and the backend answers constraints_required instead of ignoring it). at_most requires a floor. If at_most spends nothing the status is no_allocation (no numbers shown). A channel minimum above the budget is reported as "minimum exceeds budget". Changing any input hides the previous result and shows "Inputs changed" until Solve is pressed. The server validates and refuses on its own. Not run against a real backend. Currency comes from the business profile and channels; no currency input and no conversion. Curve variance is not modelled.
+- The Vercel site serves frontend and backend and login works, but no real provider/OAuth/AI connection has ever run; end-to-end behaviour with live providers is unverified.
+- Backend suite passes fully on native PostgreSQL 16.2 (184/1867); the earlier SQLite-only failures were SQLite limitations, confirmed fixed on PG.
+- OR screen has controls for budget, period, saturation, budget mode (exact / at_most), minimum marginal ROAS and per-channel min/max with their own period, with client-side validation. Min marginal ROAS is accepted only with at_most (the screen disables it otherwise, and the backend answers constraints_required instead of ignoring it). at_most requires a floor. If at_most spends nothing the status is no_allocation (no numbers shown). A channel minimum above the budget is reported as "minimum exceeds budget". Changing any input hides the previous result and shows "Inputs changed" until Solve is pressed. The server validates and refuses on its own. Currency comes from the business profile and channels; no currency input and no conversion. Curve variance is not modelled.
 - Very large budgets (about 100x observed spend) get status budget_beyond_numeric_range; a log-domain solver would extend the range (a design change, not done).
 - Whether a missing-day channel should be excluded or extrapolated is a product decision (default: excluded).
 - The response curve is an assumption; solver correctness says nothing about real ad results.

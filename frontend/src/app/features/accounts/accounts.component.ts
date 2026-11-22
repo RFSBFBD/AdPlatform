@@ -1,7 +1,7 @@
 import { parseOAuthCallback, OAUTH_PROVIDER_KEY } from './oauth-callback';
-import { PROVIDER_GUIDES, ProviderGuide } from './provider-guides';
+import { ProviderSetupGuideComponent } from './provider-setup-guide.component';
 import { Component, inject, OnInit, signal, OnDestroy } from '@angular/core';
-import { CommonModule, NgTemplateOutlet } from '@angular/common';
+import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { ButtonComponent } from '../../shared/components/button/button.component';
 import { BadgeComponent } from '../../shared/components/badge/badge.component';
@@ -37,7 +37,7 @@ export interface SyncRunDto {
 @Component({
   selector: 'app-accounts-feature',
   standalone: true,
-  imports: [CommonModule, NgTemplateOutlet, ButtonComponent, BadgeComponent, EmptyStateComponent, ModalComponent, IconComponent, DataCoverageComponent],
+  imports: [CommonModule, ButtonComponent, BadgeComponent, EmptyStateComponent, ModalComponent, IconComponent, DataCoverageComponent, ProviderSetupGuideComponent],
   template: `
     <div class="accounts-page">
       <div class="page-header">
@@ -47,22 +47,6 @@ export interface SyncRunDto {
         </div>
       </div>
 
-
-      <ng-template #guideTpl let-id>
-        @if (guides[id]; as g) {
-          <details class="setup-guide" [attr.data-guide]="g.id">
-            <summary>How to connect {{ g.id === 'tiktok' ? 'TikTok' : (g.id | titlecase) }} (official steps)</summary>
-            <p class="guide-state">{{ g.built ? 'Connection code exists in this platform (not yet run against a live provider).' : 'Not built in this platform yet. This only prepares your account.' }}</p>
-            <p><a [href]="g.portalUrl" target="_blank" rel="noopener noreferrer">Open: {{ g.portalLabel }}</a></p>
-            <ol>@for (st of g.steps; track st) { <li>{{ st }}</li> }</ol>
-            <strong>You need</strong>
-            <ul>@for (n of g.needs; track n) { <li>{{ n }}</li> }</ul>
-            <strong>Limits</strong>
-            <ul>@for (l of g.limits; track l) { <li>{{ l }}</li> }</ul>
-            <div class="guide-links">@for (d of g.docs; track d.url) { <a [href]="d.url" target="_blank" rel="noopener noreferrer">{{ d.label }}</a> }</div>
-          </details>
-        }
-      </ng-template>
 
       <!-- Provider Connect Cards -->
       <div class="providers-grid">
@@ -89,7 +73,7 @@ export interface SyncRunDto {
               <span>Connect Meta Account</span>
             </app-button>
           </div>
-          <ng-container [ngTemplateOutlet]="guideTpl" [ngTemplateOutletContext]="{ $implicit: 'meta' }"></ng-container>
+          <app-provider-setup-guide providerId="meta"></app-provider-setup-guide>
         </div>
 
         <!-- Google Ads -->
@@ -115,7 +99,7 @@ export interface SyncRunDto {
               <span>Connect Google Account</span>
             </app-button>
           </div>
-          <ng-container [ngTemplateOutlet]="guideTpl" [ngTemplateOutletContext]="{ $implicit: 'google' }"></ng-container>
+          <app-provider-setup-guide providerId="google"></app-provider-setup-guide>
         </div>
 
         <!-- TikTok Ads -->
@@ -141,7 +125,7 @@ export interface SyncRunDto {
               <span>Connect TikTok Account</span>
             </app-button>
           </div>
-          <ng-container [ngTemplateOutlet]="guideTpl" [ngTemplateOutletContext]="{ $implicit: 'tiktok' }"></ng-container>
+          <app-provider-setup-guide providerId="tiktok"></app-provider-setup-guide>
         </div>
 
         <!-- Snapchat Ads -->
@@ -160,7 +144,7 @@ export interface SyncRunDto {
               <span>Connect Snapchat Account</span>
             </app-button>
           </div>
-          <ng-container [ngTemplateOutlet]="guideTpl" [ngTemplateOutletContext]="{ $implicit: 'snapchat' }"></ng-container>
+          <app-provider-setup-guide providerId="snapchat"></app-provider-setup-guide>
         </div>
       </div>
 
@@ -442,13 +426,6 @@ export interface SyncRunDto {
       font-size: 1.1rem;
     }
 
-    .setup-guide { margin-top: 0.75rem; font-size: 0.8125rem; color: var(--text-muted, #64748b); }
-    .setup-guide summary { cursor: pointer; font-weight: 600; color: var(--text-main); }
-    .setup-guide ol, .setup-guide ul { margin: 0.375rem 0 0.5rem 1.125rem; padding: 0; }
-    .setup-guide li { margin-bottom: 0.25rem; }
-    .setup-guide a { color: #6366f1; text-decoration: underline; }
-    .guide-links { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.375rem; }
-    .guide-state { font-style: italic; }
     .meta-bg { background: linear-gradient(135deg, #1877f2, #0062e0); }
     .google-bg { background: linear-gradient(135deg, #ea4335, #fbbc05); }
     .tiktok-bg { background: linear-gradient(135deg, #000000, #25f4ee); }
@@ -785,7 +762,6 @@ export interface SyncRunDto {
   `]
 })
 export class AccountsFeatureComponent implements OnInit, OnDestroy {
-  readonly guides: Record<string, ProviderGuide> = PROVIDER_GUIDES;
   private readonly http = inject(HttpClient);
 
   readonly accounts = signal<ConnectedAccountDto[]>([]);

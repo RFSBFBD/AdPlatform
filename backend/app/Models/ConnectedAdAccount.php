@@ -65,16 +65,6 @@ class ConnectedAdAccount extends Model
         return $this->hasMany(RawProviderPayload::class);
     }
 
-    public function billingProfile()
-    {
-        return $this->hasOne(AccountBillingProfile::class);
-    }
-
-    public function billingInvoices()
-    {
-        return $this->hasMany(BillingInvoice::class);
-    }
-
     public function toSafeArray(): array
     {
         return [

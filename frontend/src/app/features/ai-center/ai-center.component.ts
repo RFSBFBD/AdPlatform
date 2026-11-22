@@ -19,21 +19,6 @@ export interface AiConfigDto {
   current_month_tokens: number;
 }
 
-export interface GeneratedCopyDto {
-  platform: string;
-  headlines: string[];
-  primary_texts: string[];
-  descriptions: string[];
-  call_to_action: string;
-}
-
-export interface AnalysisDto {
-  summary: string;
-  strengths: string[];
-  concerns: string[];
-  recommendations: string[];
-}
-
 @Component({
   selector: 'app-ai-center-feature',
   standalone: true,
@@ -43,40 +28,9 @@ export interface AnalysisDto {
       <!-- Header -->
       <div class="page-header">
         <div>
-          <h2 class="title">AI Intelligence & Model Hub</h2>
-          <p class="subtitle">Unified Bring-Your-Own-Key (BYOK) & Custom API model integrations for creative copy and automated diagnostics.</p>
+          <h2 class="title">AI Model APIs</h2>
+          <p class="subtitle">Bring-Your-Own-Key (BYOK) model connection. The connected model has one bounded job: it orders the deterministic Operations Research suggestions and attaches fixed, server-written notes. It never writes free text and never touches campaigns or budgets.</p>
         </div>
-      </div>
-
-      <!-- Navigation Tabs -->
-      <div class="nav-tabs">
-        <button 
-          type="button" 
-          class="tab-btn" 
-          [class.active]="activeTab() === 'settings'"
-          (click)="activeTab.set('settings')"
-        >
-          <app-icon name="settings" [size]="16"></app-icon>
-          <span>Connected AI APIs & Models</span>
-        </button>
-        <button 
-          type="button" 
-          class="tab-btn" 
-          [class.active]="activeTab() === 'copy'"
-          (click)="activeTab.set('copy')"
-        >
-          <app-icon name="ai" [size]="16"></app-icon>
-          <span>Ad Copy Generator</span>
-        </button>
-        <button 
-          type="button" 
-          class="tab-btn" 
-          [class.active]="activeTab() === 'diagnostics'"
-          (click)="activeTab.set('diagnostics')"
-        >
-          <app-icon name="dashboard" [size]="16"></app-icon>
-          <span>Performance Diagnostics</span>
-        </button>
       </div>
 
       <!-- Feedback Banner -->
@@ -86,221 +40,21 @@ export interface AnalysisDto {
         </div>
       }
 
-      <!-- Tab 1: Ad Copy Generator -->
-      @if (activeTab() === 'copy') {
-        <div class="tab-content">
-          <div class="copy-layout">
-            <div class="copy-form-panel">
-              <h3 class="panel-title">Creative Parameters</h3>
-              
-              <div class="field">
-                <label class="form-label">Target Network</label>
-                <div class="network-chips">
-                  <button 
-                    type="button" 
-                    [class.active]="copyParams.platform === 'meta'" 
-                    (click)="copyParams.platform = 'meta'"
-                    class="chip"
-                  >
-                    <app-icon name="meta" [size]="14"></app-icon>
-                    <span>Meta Ads</span>
-                  </button>
-                  <button 
-                    type="button" 
-                    [class.active]="copyParams.platform === 'google'" 
-                    (click)="copyParams.platform = 'google'"
-                    class="chip"
-                  >
-                    <app-icon name="google" [size]="14"></app-icon>
-                    <span>Google Ads</span>
-                  </button>
-                  <button 
-                    type="button" 
-                    [class.active]="copyParams.platform === 'tiktok'" 
-                    (click)="copyParams.platform = 'tiktok'"
-                    class="chip"
-                  >
-                    <app-icon name="tiktok" [size]="14"></app-icon>
-                    <span>TikTok Ads</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="field">
-                <label class="form-label">Product or Brand Name *</label>
-                <input 
-                  type="text" 
-                  [(ngModel)]="copyParams.product_name" 
-                  placeholder="e.g. EcoGlow Smart Lamp" 
-                  class="form-input" 
-                />
-              </div>
-
-              <div class="field">
-                <label class="form-label">Campaign Objective</label>
-                <select [(ngModel)]="copyParams.objective" class="form-input">
-                  <option value="Conversions">Conversions / Purchases</option>
-                  <option value="Lead Generation">Lead Generation</option>
-                  <option value="Traffic">Website Traffic</option>
-                  <option value="Brand Awareness">Brand Awareness</option>
-                </select>
-              </div>
-
-              <div class="field">
-                <label class="form-label">Copy Tone</label>
-                <select [(ngModel)]="copyParams.tone" class="form-input">
-                  <option value="Persuasive & High Energy">Persuasive & High Energy</option>
-                  <option value="Professional & Analytical">Professional & Analytical</option>
-                  <option value="Relatable & Casual">Relatable & Casual (UGC-Style)</option>
-                  <option value="Urgent & Direct">Urgent & Direct (FOMO / Offer)</option>
-                </select>
-              </div>
-
-              <div class="field">
-                <label class="form-label">Target Audience / Value Proposition</label>
-                <textarea 
-                  [(ngModel)]="copyParams.target_audience" 
-                  placeholder="e.g. Remote workers, eco-conscious homeowners who need soft circadian lighting." 
-                  rows="3" 
-                  class="form-input"
-                ></textarea>
-              </div>
-
-              <app-button 
-                variant="primary" 
-                [loading]="isGeneratingCopy()" 
-                (clicked)="generateCopy()"
-                class="w-full"
-              >
-                <app-icon name="sparkles" [size]="16"></app-icon>
-                <span>Generate Ad Copy Variations</span>
-              </app-button>
-            </div>
-
-            <!-- Copy Results Panel -->
-            <div class="copy-results-panel">
-              @if (isGeneratingCopy()) {
-                <div class="loading-state">
-                  <span class="spinner"></span>
-                  <span>Synthesizing high-converting copy with configured AI model...</span>
-                </div>
-              } @else if (generatedCopy()) {
-                <div class="results-container">
-                  <div class="results-header">
-                    <h4>Generated Variations for {{ generatedCopy()!.platform | uppercase }}</h4>
-                    <span class="badge-cta">CTA: {{ generatedCopy()!.call_to_action }}</span>
-                  </div>
-
-                  <div class="variation-section">
-                    <h5>Headlines</h5>
-                    <div class="variation-list">
-                      @for (hl of generatedCopy()!.headlines; track hl) {
-                        <div class="variation-item">{{ hl }}</div>
-                      }
-                    </div>
-                  </div>
-
-                  <div class="variation-section">
-                    <h5>Primary Texts / Body Copy</h5>
-                    <div class="variation-list">
-                      @for (pt of generatedCopy()!.primary_texts; track pt) {
-                        <div class="variation-item">{{ pt }}</div>
-                      }
-                    </div>
-                  </div>
-
-                  <div class="variation-section">
-                    <h5>Short Descriptions</h5>
-                    <div class="variation-list">
-                      @for (desc of generatedCopy()!.descriptions; track desc) {
-                        <div class="variation-item">{{ desc }}</div>
-                      }
-                    </div>
-                  </div>
-                </div>
-              } @else {
-                <div class="empty-panel">
-                  <app-icon name="ai" [size]="40"></app-icon>
-                  <p>Configure your parameters on the left and click Generate to produce ad copy.</p>
-                </div>
-              }
-            </div>
-          </div>
-        </div>
-      }
-
-      <!-- Tab 2: Performance Diagnostics -->
-      @if (activeTab() === 'diagnostics') {
-        <div class="tab-content">
-          <div class="diagnostics-panel">
-            <div class="panel-header">
-              <div>
-                <h3 class="panel-title">Automated Performance Diagnostics</h3>
-                <p class="panel-desc">Evaluate current campaign metrics to uncover budget fatigue and scale opportunities.</p>
-              </div>
-              <app-button 
-                variant="primary" 
-                [loading]="isAnalyzing()" 
-                (clicked)="runAnalysis()"
-              >
-                <app-icon name="dashboard" [size]="16"></app-icon>
-                <span>Run Diagnostic Analysis</span>
-              </app-button>
-            </div>
-
-            @if (isAnalyzing()) {
-              <div class="loading-state">
-                <span class="spinner"></span>
-                <span>Auditing active performance parameters...</span>
-              </div>
-            } @else if (analysisResult()) {
-              <div class="analysis-results">
-                <div class="summary-box">
-                  <h4>Executive Summary</h4>
-                  <p>{{ analysisResult()!.summary }}</p>
-                </div>
-
-                <div class="pillars-grid">
-                  <div class="pillar-card strengths">
-                    <h4>Observed Strengths</h4>
-                    <ul>
-                      @for (s of analysisResult()!.strengths; track s) {
-                        <li>{{ s }}</li>
-                      }
-                    </ul>
-                  </div>
-
-                  <div class="pillar-card concerns">
-                    <h4>Areas of Concern</h4>
-                    <ul>
-                      @for (c of analysisResult()!.concerns; track c) {
-                        <li>{{ c }}</li>
-                      }
-                    </ul>
-                  </div>
-
-                  <div class="pillar-card recommendations">
-                    <h4>Actionable Recommendations</h4>
-                    <ul>
-                      @for (r of analysisResult()!.recommendations; track r) {
-                        <li>{{ r }}</li>
-                      }
-                    </ul>
-                  </div>
-                </div>
-              </div>
-            }
-          </div>
-        </div>
-      }
-
-      <!-- Tab 3: Connected AI APIs (Clean Single Button + Modal) -->
+      <!-- Connected AI APIs (the only AI surface) -->
       @if (activeTab() === 'settings') {
         <div class="tab-content">
+          <div class="ai-role-card">
+            <app-icon name="ai" [size]="20"></app-icon>
+            <div>
+              <h4>What the connected model does here</h4>
+              <p>It only <strong>orders</strong> the Operations Research suggestions and picks fixed, server-written notes for them. Suggestion wording, numbers, platforms and actions always come from the deterministic engine, never from the model. If the model is unreachable or answers outside that contract, the deterministic order is kept automatically.</p>
+            </div>
+          </div>
+
           <div class="ai-apis-header">
             <div>
               <h3 class="section-title">Connected AI APIs</h3>
-              <p class="section-subtitle">Connect any model (DeepSeek, Groq, OpenAI, Claude, Gemini, Ollama) through a single API key.</p>
+              <p class="section-subtitle">Connect a supported model (DeepSeek, Groq, OpenAI, Claude, Gemini, Ollama) with your own API key for that provider.</p>
             </div>
             <app-button variant="primary" (clicked)="openAddModal()">
               <app-icon name="plus" [size]="16"></app-icon>
@@ -376,7 +130,7 @@ export interface AnalysisDto {
                 <app-icon name="ai" [size]="32"></app-icon>
               </div>
               <h4>No AI APIs Connected Yet</h4>
-              <p>Add your custom API key (DeepSeek, Groq, OpenAI, Claude, Ollama, etc.) to power ad creative generation and diagnostics.</p>
+              <p>Add your model API key (DeepSeek, Groq, OpenAI, Claude, Gemini, Ollama, etc.). It will only order Operations Research suggestions with fixed server-written notes.</p>
               <app-button variant="primary" (clicked)="openAddModal()">
                 <app-icon name="plus" [size]="15"></app-icon>
                 <span>Add AI API (أضف API)</span>
@@ -544,219 +298,23 @@ export interface AnalysisDto {
       border: 1px solid rgba(239, 68, 68, 0.3);
     }
 
-    /* Tab 1 Copy Layout */
-    .copy-layout {
-      display: grid;
-      grid-template-columns: 380px 1fr;
-      gap: 1.5rem;
-    }
-
-    @media (max-width: 900px) {
-      .copy-layout {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    .copy-form-panel, .copy-results-panel, .diagnostics-panel {
-      background: var(--bg-surface);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      padding: 1.5rem;
-    }
-
-    .panel-title {
-      font-size: 1.125rem;
-      font-weight: 700;
-      color: var(--text-main);
-      margin-bottom: 1.25rem;
-    }
-
-    .field {
+    /* Connected AI APIs view */
+    .ai-role-card {
       display: flex;
-      flex-direction: column;
-      margin-bottom: 1.25rem;
-    }
-
-    .network-chips {
-      display: flex;
-      gap: 0.5rem;
-    }
-
-    .network-chips .chip {
-      flex: 1;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.4rem;
-      padding: 0.5rem;
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-sm);
-      background: var(--bg-subtle);
-      color: var(--text-muted);
-      font-size: 0.8125rem;
-      font-weight: 600;
-      transition: all var(--transition-fast);
-
-      &.active {
-        border-color: var(--primary);
-        background: var(--primary-light);
-        color: var(--text-main);
-      }
-    }
-
-    .w-full {
-      width: 100%;
-    }
-
-    .loading-state {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.75rem;
-      padding: 3rem;
-      color: var(--text-muted);
-      font-size: 0.875rem;
-    }
-
-    .spinner {
-      width: 18px;
-      height: 18px;
-      border: 2px solid rgba(255, 255, 255, 0.2);
-      border-top-color: var(--primary);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    .results-container {
-      display: flex;
-      flex-direction: column;
-      gap: 1.25rem;
-    }
-
-    .results-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 1px solid var(--border-subtle);
-      padding-bottom: 0.75rem;
-    }
-
-    .badge-cta {
-      font-size: 0.75rem;
+      gap: 0.875rem;
+      align-items: flex-start;
       background: var(--primary-light);
-      color: var(--primary);
-      padding: 0.25rem 0.6rem;
-      border-radius: 9999px;
-      font-weight: 600;
-    }
-
-    .variation-section h5 {
-      font-size: 0.8125rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-muted);
-      margin-bottom: 0.5rem;
-    }
-
-    .variation-list {
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
-    }
-
-    .variation-item {
-      background: var(--bg-subtle);
       border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-sm);
-      padding: 0.75rem 1rem;
-      font-size: 0.875rem;
-      color: var(--text-main);
-      line-height: 1.45;
-    }
-
-    .empty-panel {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      padding: 4rem 2rem;
-      color: var(--text-muted);
-      gap: 0.75rem;
-    }
-
-    /* Tab 2 Diagnostics */
-    .diagnostics-panel .panel-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      border-radius: var(--radius-md);
+      padding: 1rem 1.25rem;
       margin-bottom: 1.5rem;
-      gap: 1rem;
-      flex-wrap: wrap;
+      color: var(--text-main);
     }
 
-    .panel-desc {
-      font-size: 0.875rem;
-      color: var(--text-muted);
-      margin-top: 0.25rem;
-    }
+    .ai-role-card app-icon { color: var(--primary); margin-top: 0.15rem; }
+    .ai-role-card h4 { font-size: 0.875rem; font-weight: 700; margin-bottom: 0.35rem; }
+    .ai-role-card p { font-size: 0.8125rem; color: var(--text-muted); line-height: 1.55; }
 
-    .analysis-results {
-      display: flex;
-      flex-direction: column;
-      gap: 1.25rem;
-    }
-
-    .summary-box {
-      background: var(--bg-subtle);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      padding: 1.25rem;
-    }
-
-    .summary-box h4 {
-      font-size: 0.9375rem;
-      font-weight: 700;
-      margin-bottom: 0.35rem;
-    }
-
-    .pillars-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 1.25rem;
-    }
-
-    .pillar-card {
-      background: var(--bg-surface);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      padding: 1.25rem;
-    }
-
-    .pillar-card h4 {
-      font-size: 0.875rem;
-      font-weight: 700;
-      margin-bottom: 0.75rem;
-    }
-
-    .pillar-card.strengths h4 { color: var(--success); }
-    .pillar-card.concerns h4 { color: var(--warning); }
-    .pillar-card.recommendations h4 { color: var(--primary); }
-
-    .pillar-card ul {
-      padding-left: 1.25rem;
-      font-size: 0.8125rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.4rem;
-      color: var(--text-muted);
-    }
-
-    /* Tab 3 Clean AI APIs View */
     .ai-apis-header {
       display: flex;
       align-items: center;
@@ -987,9 +545,7 @@ export interface AnalysisDto {
 export class AiCenterFeatureComponent implements OnInit {
   private readonly http = inject(HttpClient);
 
-  readonly activeTab = signal<'copy' | 'diagnostics' | 'settings'>('settings');
-  readonly isGeneratingCopy = signal<boolean>(false);
-  readonly isAnalyzing = signal<boolean>(false);
+  readonly activeTab = signal<'settings'>('settings');
 
   readonly feedbackMessage = signal<string | null>(null);
   readonly feedbackType = signal<'success' | 'error'>('success');
@@ -1011,16 +567,6 @@ export class AiCenterFeatureComponent implements OnInit {
     api_key: '',
   };
 
-  readonly generatedCopy = signal<GeneratedCopyDto | null>(null);
-  readonly analysisResult = signal<AnalysisDto | null>(null);
-
-  copyParams = {
-    platform: 'meta',
-    product_name: '',
-    objective: 'Conversions',
-    tone: 'Persuasive & High Energy',
-    target_audience: '',
-  };
 
   ngOnInit(): void {
     this.loadConfigs();
@@ -1177,43 +723,6 @@ export class AiCenterFeatureComponent implements OnInit {
     });
   }
 
-  generateCopy(): void {
-    if (!this.copyParams.product_name.trim()) {
-      this.showFeedback('Please enter a product or brand name.', 'error');
-      return;
-    }
-
-    this.isGeneratingCopy.set(true);
-    this.http.post<{ success: boolean; copy: GeneratedCopyDto }>('/api/v1/ai/generate-copy', this.copyParams).subscribe({
-      next: (res) => {
-        this.isGeneratingCopy.set(false);
-        if (res.success) {
-          this.generatedCopy.set(res.copy);
-        }
-      },
-      error: (err) => {
-        this.isGeneratingCopy.set(false);
-        this.showFeedback(err.error?.message || 'Failed to generate ad copy.', 'error');
-      }
-    });
-  }
-
-  runAnalysis(): void {
-    this.isAnalyzing.set(true);
-    // The server builds the metrics from the user's own synced data; the client sends no numbers.
-    this.http.post<{ success: boolean; analysis: AnalysisDto }>('/api/v1/ai/analyze-performance', {}).subscribe({
-      next: (res) => {
-        this.isAnalyzing.set(false);
-        if (res.success) {
-          this.analysisResult.set(res.analysis);
-        }
-      },
-      error: (err) => {
-        this.isAnalyzing.set(false);
-        this.showFeedback(err.error?.error?.message || 'Analysis is unavailable right now.', 'error');
-      }
-    });
-  }
 
   private showFeedback(msg: string, type: 'success' | 'error'): void {
     this.feedbackMessage.set(msg);

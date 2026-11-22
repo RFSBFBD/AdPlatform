@@ -1,5 +1,6 @@
 import { Component, inject, OnInit, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { StatCardComponent } from '../../shared/components/stat-card/stat-card.component';
 import { EmptyStateComponent } from '../../shared/components/empty-state/empty-state.component';
@@ -17,6 +18,12 @@ export interface OverviewSummary {
   ctr: number;
   roas: number;
   cpa: number;
+}
+
+export interface OrSuggestionItem {
+  title: string;
+  severity: string;
+  kind: string;
 }
 
 export interface PlatformItem {
@@ -39,7 +46,7 @@ export interface TimelineItem {
 @Component({
   selector: 'app-dashboard-feature',
   standalone: true,
-  imports: [CommonModule, StatCardComponent, EmptyStateComponent, IconComponent],
+  imports: [CommonModule, RouterLink, StatCardComponent, EmptyStateComponent, IconComponent],
   template: `
     <div class="dashboard-page">
       <!-- Header with Filters -->
@@ -130,8 +137,8 @@ export interface TimelineItem {
       <div class="stats-grid">
         <app-stat-card 
           title="Total Ad Spend" 
-          [value]="(summary().spend | currency:'USD':'symbol':'1.2-2') || '$0.00'" 
-          subtext="Harmonized spend across channels" 
+          [value]="(summary().spend | currency:reportingCurrency():'symbol':'1.2-2') || '0.00'" 
+          [subtext]="'Synced provider spend in reporting currency (' + reportingCurrency() + ')'" 
         />
         <app-stat-card 
           title="Total Impressions" 
@@ -141,12 +148,12 @@ export interface TimelineItem {
         <app-stat-card 
           title="Total Clicks" 
           [value]="(summary().clicks | number) || '0'" 
-          [subtext]="'CTR: ' + summary().ctr + '% • CPC: $' + summary().cpc" 
+          [subtext]="'CTR: ' + summary().ctr + '% • CPC: ' + summary().cpc + ' ' + reportingCurrency()" 
         />
         <app-stat-card 
           title="Blended ROAS" 
           [value]="summary().roas + 'x'" 
-          [subtext]="'Conversions: ' + (summary().conversions | number) + ' • CPA: $' + summary().cpa" 
+          [subtext]="'Conversions: ' + (summary().conversions | number) + ' • CPA: ' + summary().cpa + ' ' + reportingCurrency()" 
         />
       </div>
 
@@ -158,21 +165,38 @@ export interface TimelineItem {
               <app-icon name="trend-up" [size]="18"></app-icon>
             </div>
             <div class="decision-content">
-              <span class="decision-tag">EFFICIENCY LEADER</span>
+              <span class="decision-tag">TOP OBSERVED ROAS</span>
               <p class="decision-text">{{ getBestChannelInsight() }}</p>
-            </div>
-          </div>
-          <div class="decision-card warning">
-            <div class="decision-icon">
-              <app-icon name="alert" [size]="18"></app-icon>
-            </div>
-            <div class="decision-content">
-              <span class="decision-tag">OPTIMIZATION ACTION</span>
-              <p class="decision-text">{{ getBudgetShiftInsight() }}</p>
             </div>
           </div>
         </div>
       }
+
+      <!-- Operations Research: the core decision surface -->
+      <div class="or-card">
+        <div class="or-card-header">
+          <div class="decision-icon">
+            <app-icon name="chart" [size]="18"></app-icon>
+          </div>
+          <div>
+            <h3 class="or-card-title">Operations Research Engine</h3>
+            <p class="or-card-sub">Deterministic budget scenarios and grounded suggestions. This is the core decision surface of the platform.</p>
+          </div>
+          <a routerLink="/operations-research" class="or-card-link">Open OR Engine</a>
+        </div>
+        @if (orSuggestions().length > 0) {
+          <ul class="or-suggestion-list">
+            @for (sug of orSuggestions(); track sug.title) {
+              <li>
+                <span class="or-severity" [attr.data-severity]="sug.severity">{{ sug.severity }}</span>
+                <span class="or-suggestion-title">{{ sug.title }}</span>
+              </li>
+            }
+          </ul>
+        } @else {
+          <p class="or-empty">No grounded suggestions yet. Connect an ad account and sync, then the engine reads the same data here.</p>
+        }
+      </div>
 
       @if (isLoading()) {
         <div class="loading-state">
@@ -333,7 +357,7 @@ export interface TimelineItem {
                       </span>
                       <span class="platform-roas-pill">{{ plat.roas }}x ROAS</span>
                     </div>
-                    <span class="platform-spend">{{ plat.spend | currency:'USD':'symbol':'1.2-2' }}</span>
+                    <span class="platform-spend">{{ plat.spend | currency:reportingCurrency():'symbol':'1.2-2' }}</span>
                   </div>
 
                   <div class="progress-bar-bg">
@@ -711,12 +735,69 @@ export interface TimelineItem {
         grid-template-columns: 1fr;
       }
     }
+
+    .or-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-left: 3px solid var(--primary);
+      border-radius: var(--radius-md);
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .or-card-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.875rem;
+    }
+
+    .or-card-title { font-size: 1rem; font-weight: 700; color: var(--text-main); }
+    .or-card-sub { font-size: 0.8125rem; color: var(--text-muted); margin-top: 0.15rem; }
+
+    .or-card-link {
+      margin-left: auto;
+      white-space: nowrap;
+      font-size: 0.8125rem;
+      font-weight: 700;
+      color: var(--primary);
+      text-decoration: none;
+      padding: 0.45rem 0.9rem;
+      border: 1px solid var(--primary);
+      border-radius: var(--radius-sm);
+    }
+
+    .or-suggestion-list {
+      list-style: none;
+      margin: 1rem 0 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .or-suggestion-list li { display: flex; align-items: center; gap: 0.6rem; font-size: 0.875rem; }
+
+    .or-severity {
+      font-size: 0.6875rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 0.15rem 0.5rem;
+      border-radius: var(--radius-sm);
+      background: var(--bg-subtle);
+      color: var(--text-muted);
+    }
+
+    .or-severity[data-severity='attention'] { background: var(--danger-bg); color: var(--danger); }
+    .or-severity[data-severity='scenario'] { background: var(--primary-light); color: var(--primary); }
+    .or-suggestion-title { color: var(--text-main); }
+    .or-empty { margin-top: 0.75rem; font-size: 0.8125rem; color: var(--text-muted); }
   `]
 })
 export class DashboardFeatureComponent implements OnInit {
   private readonly http = inject(HttpClient);
 
   readonly isLoading = signal<boolean>(false);
+  readonly orSuggestions = signal<OrSuggestionItem[]>([]);
   readonly selectedPlatform = signal<string>('');
   readonly dateRangePreset = signal<'7d' | '30d' | '90d'>('30d');
   readonly selectedMetric = signal<'spend' | 'roas' | 'clicks' | 'conversions'>('spend');
@@ -736,6 +817,7 @@ export class DashboardFeatureComponent implements OnInit {
 
   readonly platforms = signal<PlatformItem[]>([]);
   readonly timeline = signal<TimelineItem[]>([]);
+  readonly reportingCurrency = signal<string>('USD');
 
   // Hover Tooltip tracking
   readonly hoverPoint = signal<{ x: number; y: number; item: TimelineItem } | null>(null);
@@ -744,6 +826,17 @@ export class DashboardFeatureComponent implements OnInit {
 
   ngOnInit(): void {
     this.fetchOverview();
+    this.fetchOrSuggestions();
+  }
+
+  fetchOrSuggestions(): void {
+    this.http.get<{ success: boolean; data: { suggestions: OrSuggestionItem[] } }>('/api/v1/analytics/suggestions').subscribe({
+      next: (res) => {
+        const list = res?.data?.suggestions ?? [];
+        this.orSuggestions.set(list.slice(0, 3));
+      },
+      error: () => this.orSuggestions.set([]),
+    });
   }
 
   setPlatform(platform: string): void {
@@ -771,9 +864,10 @@ export class DashboardFeatureComponent implements OnInit {
     }
 
     this.http.get<{
-      summary: OverviewSummary;
+      summary: OverviewSummary & { primary_currency?: string };
       platforms: PlatformItem[];
       timeline: TimelineItem[];
+      reporting_currency?: string;
     }>(url).subscribe({
       next: (res) => {
         this.isLoading.set(false);
@@ -781,6 +875,7 @@ export class DashboardFeatureComponent implements OnInit {
           this.summary.set(res.summary);
           this.platforms.set(res.platforms || []);
           this.timeline.set(res.timeline || []);
+          this.reportingCurrency.set(res.reporting_currency || res.summary.primary_currency || 'USD');
         }
       },
       error: () => {
@@ -794,21 +889,14 @@ export class DashboardFeatureComponent implements OnInit {
     if (list.length === 0) return 'Analyzing channel performance metrics...';
     const sorted = [...list].sort((a, b) => b.roas - a.roas);
     const best = sorted[0];
-    return `${best.provider.toUpperCase()} leads in return on ad spend at ${best.roas}x ROAS. Prime candidate for scale.`;
+    return `${best.provider.toUpperCase()} shows the highest observed ROAS (${best.roas}x) in this period. This is an observed metric, not a recommendation; budget scenarios live in the OR engine below.`;
   }
 
-  getBudgetShiftInsight(): string {
-    const list = this.platforms();
-    if (list.length < 2) return 'Cross-channel parity maintained across active campaigns.';
-    const sorted = [...list].sort((a, b) => a.roas - b.roas);
-    const worst = sorted[0];
-    return `Reallocate 10-15% testing budget from ${worst.provider.toUpperCase()} (${worst.roas}x ROAS) to top converting channels.`;
-  }
 
   formatMetricValue(item: TimelineItem): string {
     const metric = this.selectedMetric();
     switch (metric) {
-      case 'spend': return `$${item.spend.toFixed(2)}`;
+      case 'spend': return `${item.spend.toFixed(2)} ${this.reportingCurrency()}`;
       case 'roas': return `${item.roas}x`;
       case 'clicks': return `${item.clicks}`;
       case 'conversions': return `${item.conversions}`;

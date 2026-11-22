@@ -13,12 +13,15 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // 1. Enable pg_trgm extension for GIN trigram indexing on PostgreSQL
-        DB::statement('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
+        if (DB::getDriverName() === 'pgsql') {
+            // 1. Enable pg_trgm extension for GIN trigram indexing on PostgreSQL
+            DB::statement('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
 
-        // 2. Add GIN Trigram indexes on campaigns name & external_campaign_id
-        DB::statement('CREATE INDEX IF NOT EXISTS idx_campaigns_name_trgm ON campaigns USING gin (name gin_trgm_ops);');
-        DB::statement('CREATE INDEX IF NOT EXISTS idx_campaigns_ext_id_trgm ON campaigns USING gin (external_campaign_id gin_trgm_ops);');
+            // 2. Add GIN Trigram indexes on campaigns name & external_campaign_id
+            DB::statement('CREATE INDEX IF NOT EXISTS idx_campaigns_name_trgm ON campaigns USING gin (name gin_trgm_ops);');
+            DB::statement('CREATE INDEX IF NOT EXISTS idx_campaigns_ext_id_trgm ON campaigns USING gin (external_campaign_id gin_trgm_ops);');
+        }
+        // SQLite has no trigram/GIN support; full- scans are acceptable for local and test data sizes.
 
         // 3. Add compound index for filtering campaigns by account, provider, and status
         DB::statement('CREATE INDEX IF NOT EXISTS idx_campaigns_account_provider_status ON campaigns (connected_ad_account_id, provider, status);');

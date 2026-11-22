@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\AiConfig;
 use App\Services\Ai\AiManager;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use RuntimeException;
 
 class AiController extends Controller
 {
@@ -105,7 +107,39 @@ class AiController extends Controller
             ->where('provider', $provider)
             ->firstOrFail();
 
-        $result = $this->aiManager->testConnection($config);
+        if (empty($config->api_key)) {
+            return response()->json([
+                'success' => false,
+                'message' => "No API key is saved for {$provider}. Add the key, then test again.",
+                'error' => [
+                    'code' => 'AI_KEY_NOT_CONFIGURED',
+                    'message' => "No API key is saved for {$provider}. Add the key, then test again.",
+                ],
+            ], 422);
+        }
+
+        try {
+            $result = $this->aiManager->testConnection($config);
+        } catch (ConnectionException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => "Could not reach the {$provider} API. Check the endpoint URL and try again.",
+                'error' => [
+                    'code' => 'AI_UPSTREAM_UNREACHABLE',
+                    'message' => "Could not reach the {$provider} API. Check the endpoint URL and try again.",
+                ],
+            ], 502);
+        } catch (RuntimeException $e) {
+            // AiManager failure messages are safe by contract: provider + HTTP status only, never the key or response body.
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'error' => [
+                    'code' => 'AI_UPSTREAM_REJECTED',
+                    'message' => $e->getMessage(),
+                ],
+            ], 502);
+        }
 
         return response()->json([
             'message' => "Connection to {$provider} verified successfully.",
@@ -113,158 +147,4 @@ class AiController extends Controller
         ]);
     }
 
-    /**
-     * Converse with AI Data Analyst to evaluate marketing performance.
-     */
-    public function chat(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'messages' => ['required', 'array', 'min:1'],
-            'messages.*.role' => ['required', 'string', 'in:user,assistant,system'],
-            'messages.*.content' => ['required', 'string', 'max:5000'],
-        ]);
-
-        try {
-            $output = $this->aiManager->chat($request->user(), $validated['messages']);
-
-            return response()->json([
-                'success' => true,
-                'reply' => $output['reply'],
-                'usage' => [
-                    'tokens' => $output['tokens_used'],
-                    'model' => $output['model'],
-                    'provider' => $output['provider'],
-                ],
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'AI_CHAT_FAILED',
-                    'message' => $e->getMessage(),
-                ],
-            ], 500);
-        }
-    }
-
-    /**
-     * Generate platform-specific ad copy variations.
-     */
-    public function generateCopy(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'platform' => ['required', 'string', 'in:meta,google,tiktok'],
-            'product_name' => ['required', 'string', 'max:150'],
-            'objective' => ['nullable', 'string', 'max:100'],
-            'tone' => ['nullable', 'string', 'max:50'],
-            'target_audience' => ['nullable', 'string', 'max:200'],
-        ]);
-
-        try {
-            $output = $this->aiManager->generateAdCopy($request->user(), $validated);
-
-            return response()->json([
-                'success' => true,
-                'copy' => $output['data'],
-                'usage' => [
-                    'tokens' => $output['tokens_used'],
-                    'model' => $output['model'],
-                    'provider' => $output['provider'],
-                ],
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'AI_EXECUTION_FAILED',
-                    'message' => $e->getMessage(),
-                ],
-            ], 400);
-        }
-    }
-
-    /**
-     * Analyze campaign metrics and provide AI optimization advice.
-     */
-    public function analyzePerformance(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'metrics' => ['sometimes', 'array'],
-        ]);
-
-        // Numbers come from the user's own synced data (computed in code), never from the client or the model.
-        $metrics = $this->metricsForUser($request->user()->id);
-        if (empty($metrics)) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'INSUFFICIENT_DATA',
-                    'message' => 'No synced performance data in the last 30 days. Connect an ad account and sync before requesting an analysis.',
-                ],
-            ], 422);
-        }
-
-        if (count(array_unique(array_column($metrics, 'currency'))) > 1) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'MIXED_CURRENCY',
-                    'message' => 'Your connected accounts report in more than one currency. No combined analysis is produced and nothing is converted; filter to a single currency first.',
-                ],
-            ], 422);
-        }
-
-        try {
-            $output = $this->aiManager->analyzePerformance($request->user(), $metrics);
-
-            return response()->json([
-                'success' => true,
-                'analysis' => $output['data'],
-                'usage' => [
-                    'tokens' => $output['tokens_used'],
-                    'model' => $output['model'],
-                    'provider' => $output['provider'],
-                ],
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'AI_EXECUTION_FAILED',
-                    'message' => $e->getMessage(),
-                ],
-            ], 400);
-        }
-    }
-
-    /**
-     * Exact per-provider totals for the last 30 days, scoped to the authenticated user.
-     */
-    private function metricsForUser(int $userId): array
-    {
-        $accountIds = \App\Models\ConnectedAdAccount::where('user_id', $userId)->pluck('id');
-        if ($accountIds->isEmpty()) {
-            return [];
-        }
-
-        // Grouped per provider AND currency: amounts in different currencies are never summed.
-        return \App\Models\PerformanceMetric::whereIn('connected_ad_account_id', $accountIds)
-            ->where('date', '>=', now()->subDays(30)->toDateString())
-            ->selectRaw('provider, currency, SUM(spend) as spend, SUM(impressions) as impressions, SUM(clicks) as clicks, SUM(conversions) as conversions, SUM(conversion_value) as conversion_value')
-            ->groupBy('provider', 'currency')
-            ->get()
-            ->filter(fn($r) => (float) $r->spend > 0 || (int) $r->impressions > 0)
-            ->map(fn($r) => [
-                'name' => $r->provider,
-                'currency' => $r->currency,
-                'spend' => round((float) $r->spend, 2),
-                'impressions' => (int) $r->impressions,
-                'clicks' => (int) $r->clicks,
-                'conversions' => (float) $r->conversions,
-                'roas' => (float) $r->spend > 0 ? round((float) $r->conversion_value / (float) $r->spend, 2) : null,
-                'ctr' => (int) $r->impressions > 0 ? round(100 * (int) $r->clicks / (int) $r->impressions, 2) : null,
-            ])
-            ->values()
-            ->all();
-    }
 }

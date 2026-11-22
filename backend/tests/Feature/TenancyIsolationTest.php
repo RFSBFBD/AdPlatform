@@ -2,8 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Models\AccountBillingProfile;
-use App\Models\BillingInvoice;
 use App\Models\Campaign;
 use App\Models\ConnectedAdAccount;
 use App\Models\PerformanceMetric;
@@ -125,46 +123,6 @@ class TenancyIsolationTest extends TestCase
             'conversion_value' => 1200.00,
         ]);
 
-        // Billing Profiles & Invoices
-        AccountBillingProfile::create([
-            'connected_ad_account_id' => $this->accountA->id,
-            'outstanding_balance' => 75.00,
-            'currency' => 'USD',
-            'payment_method_type' => 'Credit Card',
-            'payment_method_masked' => '•••• 1111',
-            'status' => 'NORMAL',
-        ]);
-
-        AccountBillingProfile::create([
-            'connected_ad_account_id' => $this->accountB->id,
-            'outstanding_balance' => 999.00,
-            'currency' => 'EUR',
-            'payment_method_type' => 'Bank Transfer',
-            'payment_method_masked' => '•••• 2222',
-            'status' => 'NORMAL',
-        ]);
-
-        BillingInvoice::create([
-            'connected_ad_account_id' => $this->accountA->id,
-            'external_invoice_id' => 'INV-TENANT-A-001',
-            'invoice_date' => now()->format('Y-m-d'),
-            'amount' => 75.00,
-            'tax_amount' => 0.00,
-            'total_amount' => 75.00,
-            'currency' => 'USD',
-            'status' => 'PAID',
-        ]);
-
-        BillingInvoice::create([
-            'connected_ad_account_id' => $this->accountB->id,
-            'external_invoice_id' => 'INV-TENANT-B-001',
-            'invoice_date' => now()->format('Y-m-d'),
-            'amount' => 999.00,
-            'tax_amount' => 0.00,
-            'total_amount' => 999.00,
-            'currency' => 'EUR',
-            'status' => 'PAID',
-        ]);
     }
 
     public function test_user_cannot_list_ad_accounts_belonging_to_another_user(): void
@@ -212,29 +170,6 @@ class TenancyIsolationTest extends TestCase
         // User B tries to access Campaign A
         $response = $this->actingAs($this->userB, 'sanctum')->getJson("/api/v1/analytics/campaigns/{$this->campaignA->id}");
         $response->assertStatus(403);
-    }
-
-    public function test_billing_summary_is_isolated_per_user(): void
-    {
-        $response = $this->actingAs($this->userA, 'sanctum')->getJson('/api/v1/billing/summary');
-        $response->assertOk();
-
-        $this->assertEquals(75.00, $response->json('summary.total_outstanding_balance'));
-        $this->assertEquals(75.00, $response->json('summary.invoiced_this_month'));
-
-        $accountIds = collect($response->json('accounts'))->pluck('account_id');
-        $this->assertTrue($accountIds->contains($this->accountA->id));
-        $this->assertFalse($accountIds->contains($this->accountB->id));
-    }
-
-    public function test_billing_invoices_are_isolated_per_user(): void
-    {
-        $response = $this->actingAs($this->userA, 'sanctum')->getJson('/api/v1/billing/invoices');
-        $response->assertOk();
-
-        $invoiceIds = collect($response->json('data'))->pluck('external_invoice_id');
-        $this->assertTrue($invoiceIds->contains('INV-TENANT-A-001'));
-        $this->assertFalse($invoiceIds->contains('INV-TENANT-B-001'));
     }
 
     public function test_viewer_role_cannot_disconnect_an_ad_account_sec_002(): void

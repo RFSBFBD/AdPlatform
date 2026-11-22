@@ -21,7 +21,6 @@ class RoleAndPermissionSeeder extends Seeder
             'export-reports',
             'manage-accounts',
             'sync-campaigns',
-            'manage-billing',
             'manage-developers',
             'manage-users',
             'manage-ai',

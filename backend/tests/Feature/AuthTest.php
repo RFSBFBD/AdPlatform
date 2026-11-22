@@ -103,36 +103,6 @@ class AuthTest extends TestCase
         $response->assertStatus(403);
     }
 
-    public function test_owner_can_invite_new_member(): void
-    {
-        $owner = User::where('email', 'admin@adplatform.local')->first();
-        $token = $owner->createToken('owner_token')->plainTextToken;
-
-        $response = $this->withHeader('Authorization', "Bearer {$token}")
-                         ->postJson('/api/v1/users/invite', [
-                             'email' => 'colleague@company.com',
-                             'role' => 'Analyst',
-                         ]);
-
-        $response->assertStatus(201)
-                 ->assertJson([
-                     'success' => true,
-                     'data' => [
-                         'email' => 'colleague@company.com',
-                         'role' => 'Analyst',
-                     ],
-                 ]);
-
-        $this->assertDatabaseHas('invitations', [
-            'email' => 'colleague@company.com',
-            'role' => 'Analyst',
-        ]);
-
-        $this->assertDatabaseHas('audit_logs', [
-            'action' => 'user.invited',
-        ]);
-    }
-
     public function test_owner_can_directly_create_user_with_password(): void
     {
         $owner = User::where('email', 'admin@adplatform.local')->first();

@@ -5,6 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { ButtonComponent } from '../../shared/components/button/button.component';
 import { BadgeComponent } from '../../shared/components/badge/badge.component';
 import { IconComponent } from '../../shared/components/icon/icon.component';
+import { ProviderSetupGuideComponent } from '../accounts/provider-setup-guide.component';
 
 export interface ProviderConfigDto {
   id?: number;
@@ -25,7 +26,7 @@ export interface ProviderConfigDto {
 @Component({
   selector: 'app-developer-settings-feature',
   standalone: true,
-  imports: [CommonModule, FormsModule, ButtonComponent, BadgeComponent, IconComponent],
+  imports: [CommonModule, FormsModule, ButtonComponent, BadgeComponent, IconComponent, ProviderSetupGuideComponent],
   template: `
     <div class="settings-page">
       <div class="page-header">
@@ -112,6 +113,7 @@ export interface ProviderConfigDto {
               <span>Test Handshake</span>
             </app-button>
           </div>
+          <app-provider-setup-guide providerId="meta"></app-provider-setup-guide>
         </div>
 
         <!-- Google Ads Dev Config -->
@@ -203,6 +205,7 @@ export interface ProviderConfigDto {
               <span>Test Handshake</span>
             </app-button>
           </div>
+          <app-provider-setup-guide providerId="google"></app-provider-setup-guide>
         </div>
 
         <!-- TikTok Ads Dev Config -->
@@ -273,6 +276,7 @@ export interface ProviderConfigDto {
               <span>Test Handshake</span>
             </app-button>
           </div>
+          <app-provider-setup-guide providerId="tiktok"></app-provider-setup-guide>
         </div>
 
         <!-- Snapchat Ads Dev Config -->
@@ -343,6 +347,7 @@ export interface ProviderConfigDto {
               <span>Test Handshake</span>
             </app-button>
           </div>
+          <app-provider-setup-guide providerId="snapchat"></app-provider-setup-guide>
         </div>
 
         <!-- Google Looker Studio (Google Locker) Integration -->
@@ -480,6 +485,11 @@ export interface ProviderConfigDto {
       display: flex;
       align-items: center;
       gap: 0.75rem;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .card-header app-badge {
+      flex-shrink: 0;
     }
 
     .platform-icon {
@@ -569,6 +579,11 @@ export interface ProviderConfigDto {
       border-color: rgba(66, 133, 244, 0.35);
       background: linear-gradient(180deg, rgba(66, 133, 244, 0.05) 0%, var(--bg-surface) 100%);
     }
+    @media (min-width: 1200px) {
+      .looker-highlight {
+        grid-column: span 2;
+      }
+    }
 
     .url-copy-box {
       display: flex;
@@ -646,7 +661,7 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
   readonly lookerTestStatus = signal<'untested' | 'connected' | 'error'>('untested');
   readonly isTestingLooker = signal<boolean>(false);
   readonly copiedLookerUrl = signal<boolean>(false);
-  readonly lookerEndpointUrl = `${window.location.origin}/api/v1/looker`;
+  readonly lookerEndpointUrl = `${window.location.origin}/api/v1/reporting/looker-studio`;
 
   metaConfig: ProviderConfigDto = this.createDefault('meta');
   googleConfig: ProviderConfigDto = this.createDefault('google');
@@ -760,7 +775,7 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
 
   testLookerEndpoint(): void {
     this.isTestingLooker.set(true);
-    this.http.get<{ schema: any[] }>('/api/v1/looker?schema=true').subscribe({
+    this.http.get<{ schema: any[] }>('/api/v1/reporting/looker-studio?schema=true').subscribe({
       next: (res) => {
         this.isTestingLooker.set(false);
         this.lookerTestStatus.set('connected');

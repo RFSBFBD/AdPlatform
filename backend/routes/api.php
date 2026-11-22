@@ -62,7 +62,6 @@ Route::prefix('v1')->group(function () {
         Route::middleware(['permission:manage-users'])->prefix('users')->group(function () {
             Route::get('/', [UserController::class, 'index']);
             Route::post('/', [UserController::class, 'store']);
-            Route::post('/invite', [UserController::class, 'invite']);
             Route::put('/{id}/role', [UserController::class, 'updateRole']);
             Route::delete('/{id}', [UserController::class, 'destroy']);
         });
@@ -105,25 +104,17 @@ Route::prefix('v1')->group(function () {
         Route::get('/business-profile', [\App\Http\Controllers\Api\V1\BusinessProfileController::class, 'show']);
         Route::put('/business-profile', [\App\Http\Controllers\Api\V1\BusinessProfileController::class, 'update']);
 
-        // Billing & Payment Information
-        Route::prefix('billing')->group(function () {
-            Route::get('/summary', [\App\Http\Controllers\Api\V1\BillingController::class, 'summary']);
-            Route::get('/invoices', [\App\Http\Controllers\Api\V1\BillingController::class, 'invoices']);
-        });
-
-        // AI Integrations Center (BYOK & Custom Models)
+        // AI model connection (BYOK & custom models). The configured model has one bounded job:
+        // it ORDERS the deterministic OR suggestions and attaches fixed server-written notes.
+        // No free-text generation endpoints exist by design.
         Route::prefix('ai')->group(function () {
             Route::get('/config', [\App\Http\Controllers\Api\V1\AiController::class, 'getConfig']);
             Route::put('/config/{provider}', [\App\Http\Controllers\Api\V1\AiController::class, 'updateConfig']);
             Route::delete('/config/{provider}', [\App\Http\Controllers\Api\V1\AiController::class, 'deleteConfig']);
             Route::post('/config/{provider}/test', [\App\Http\Controllers\Api\V1\AiController::class, 'testConnection']);
-            Route::post('/chat', [\App\Http\Controllers\Api\V1\AiController::class, 'chat']);
-            Route::post('/generate-copy', [\App\Http\Controllers\Api\V1\AiController::class, 'generateCopy']);
-            Route::post('/analyze-performance', [\App\Http\Controllers\Api\V1\AiController::class, 'analyzePerformance']);
         });
 
         // Looker Studio BI Community Connector Endpoint
         Route::get('/reporting/looker-studio', [\App\Http\Controllers\Api\V1\LookerStudioController::class, 'handle']);
-        Route::get('/looker', [\App\Http\Controllers\Api\V1\LookerStudioController::class, 'handle']);
     });
 });

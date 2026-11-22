@@ -373,10 +373,10 @@ export class AppShellComponent {
   // Modern navigation items: Billing and Accounts removed per user request, AI Chatbot replaced with Operations Research Engine
   readonly navItems: NavItem[] = [
     { label: 'Overview Dashboard', route: '/dashboard', icon: 'dashboard' },
+    { label: 'Operations Research', route: '/operations-research', icon: 'chart', badge: 'OR' },
+    { label: 'Campaigns', route: '/campaigns', icon: 'campaigns' },
     { label: 'Connected Accounts', route: '/accounts', icon: 'developer' },
     { label: 'Business Profile', route: '/business-profile', icon: 'team' },
-    { label: 'Campaigns', route: '/campaigns', icon: 'campaigns' },
-    { label: 'Operations Research', route: '/operations-research', icon: 'chart', badge: 'OR' },
     { label: 'AI Model APIs', route: '/ai-center', icon: 'ai' },
     { label: 'Developer API Hub', route: '/developer-settings', icon: 'developer' },
     { label: 'Team & Access', route: '/team', icon: 'team' },
