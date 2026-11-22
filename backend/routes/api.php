@@ -89,10 +89,16 @@ Route::prefix('v1')->group(function () {
         // Analytics & Reporting Endpoints
         Route::prefix('analytics')->group(function () {
             Route::get('/overview', [\App\Http\Controllers\Api\V1\AnalyticsController::class, 'overview']);
+            Route::get('/data-coverage', [\App\Http\Controllers\Api\V1\AnalyticsController::class, 'dataCoverage']);
+            Route::get('/suggestions', [\App\Http\Controllers\Api\V1\AnalyticsController::class, 'suggestions']);
             Route::get('/campaigns', [\App\Http\Controllers\Api\V1\AnalyticsController::class, 'campaigns']);
             Route::get('/campaigns/{id}', [\App\Http\Controllers\Api\V1\AnalyticsController::class, 'campaignDetails']);
             Route::get('/operations-research', [\App\Http\Controllers\Api\V1\AnalyticsController::class, 'operationsResearch']);
         });
+
+        // Business profile (per-user inputs for scenarios; never shared across users)
+        Route::get('/business-profile', [\App\Http\Controllers\Api\V1\BusinessProfileController::class, 'show']);
+        Route::put('/business-profile', [\App\Http\Controllers\Api\V1\BusinessProfileController::class, 'update']);
 
         // Billing & Payment Information
         Route::prefix('billing')->group(function () {

@@ -48,7 +48,7 @@ final class ChannelParameterDto
         if ($lambda >= $maxMarginal) {
             return $this->minSpend;
         }
-        if ($lambda <= 0.0001) {
+        if ($lambda <= 1e-12) {
             return $this->maxSpend;
         }
 

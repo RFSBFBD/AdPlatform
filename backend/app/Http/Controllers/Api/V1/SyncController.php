@@ -23,7 +23,7 @@ class SyncController extends Controller
     {
         $account = ConnectedAdAccount::findOrFail($id);
 
-        if ($account->user_id !== $request->user()->id && !$request->user()->hasAnyRole(['Owner', 'Admin'])) {
+        if ($account->user_id !== $request->user()->id) {
             return response()->json([
                 'success' => false,
                 'error' => [
@@ -52,8 +52,10 @@ class SyncController extends Controller
                 $validated['end_date'] ?? null
             );
 
+            $status = (string) ($syncRun->status ?? 'unknown');
             return response()->json([
-                'message' => 'Synchronization completed.',
+                'message' => $status === 'completed' ? 'Synchronization completed.' : "Synchronization finished with status: {$status}.",
+                'status' => $status,
                 'sync_run' => $syncRun,
             ]);
         }
@@ -80,7 +82,7 @@ class SyncController extends Controller
     {
         $account = ConnectedAdAccount::findOrFail($id);
 
-        if ($account->user_id !== $request->user()->id && !$request->user()->hasAnyRole(['Owner', 'Admin'])) {
+        if ($account->user_id !== $request->user()->id) {
             return response()->json([
                 'success' => false,
                 'error' => [
@@ -119,7 +121,7 @@ class SyncController extends Controller
     {
         $account = ConnectedAdAccount::findOrFail($id);
 
-        if ($account->user_id !== $request->user()->id && !$request->user()->hasAnyRole(['Owner', 'Admin'])) {
+        if ($account->user_id !== $request->user()->id) {
             return response()->json([
                 'success' => false,
                 'error' => [

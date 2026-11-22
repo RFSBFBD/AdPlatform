@@ -16,14 +16,19 @@ class AuthTest extends TestCase
     {
         parent::setUp();
         // Seed roles and permissions for tests
-        $this->seed(RoleAndPermissionSeeder::class);
+        (new RoleAndPermissionSeeder())->run(); // direct run: avoids artisan in php-wasm
+        // The seeder has no built-in password; tests set their own throwaway one.
+        \App\Models\User::where('email', 'admin@adplatform.local')
+            ->update(['password' => \Illuminate\Support\Facades\Hash::make(self::TEST_PASSWORD)]);
     }
+
+    private const TEST_PASSWORD = 'Test-Only-Password-1!';
 
     public function test_user_can_login_with_valid_credentials(): void
     {
         $response = $this->postJson('/api/v1/auth/login', [
             'email' => 'admin@adplatform.local',
-            'password' => 'AdminSecurePassword2026!',
+            'password' => self::TEST_PASSWORD,
         ]);
 
         $response->assertStatus(200)

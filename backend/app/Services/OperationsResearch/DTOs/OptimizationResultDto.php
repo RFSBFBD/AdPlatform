@@ -31,8 +31,50 @@ final class OptimizationResultDto
         public readonly array $recommendations,
         public readonly array $frontierCurve,
         public readonly array $sensitivityPoints,
-        public readonly string $mathematicalModel = 'Convex Diminishing Marginal Returns (KKT Equilibrium)'
+        public readonly string $mathematicalModel = 'Concave exponential response curve (assumed, not fitted); numerical solution of the equal-marginal-return (KKT) condition',
+        public readonly string $status = 'ok', // ok | insufficient_data | infeasible
+        public readonly ?string $statusMessage = null,
+        public readonly array $warnings = [],
+        public readonly array $dataSources = [],
+        public readonly array $gates = [],
+        public readonly array $certificate = [],
+        public readonly array $comparison = []
     ) {}
+
+    public function withGates(array $gates): self
+    {
+        return new self(
+            $this->totalBudget, $this->currentTotalRevenue, $this->currentBlendedRoas, $this->optimalTotalRevenue,
+            $this->optimalBlendedRoas, $this->revenueGainDelta, $this->roasGainDelta, $this->equilibriumLambda,
+            $this->channelAllocations, $this->recommendations, $this->frontierCurve, $this->sensitivityPoints,
+            $this->mathematicalModel, $this->status, $this->statusMessage, $this->warnings, $this->dataSources, $gates, $this->certificate, $this->comparison
+        );
+    }
+
+    /**
+     * A result that carries no numbers and no recommendations: used when the engine must abstain.
+     */
+    public static function abstain(string $status, string $message, float $budget = 0.0, array $warnings = [], array $dataSources = []): self
+    {
+        return new self(
+            totalBudget: $budget,
+            currentTotalRevenue: 0.0,
+            currentBlendedRoas: 0.0,
+            optimalTotalRevenue: 0.0,
+            optimalBlendedRoas: 0.0,
+            revenueGainDelta: 0.0,
+            roasGainDelta: 0.0,
+            equilibriumLambda: 0.0,
+            channelAllocations: [],
+            recommendations: [],
+            frontierCurve: [],
+            sensitivityPoints: [],
+            status: $status,
+            statusMessage: $message,
+            warnings: $warnings,
+            dataSources: $dataSources,
+        );
+    }
 
     public function toArray(): array
     {
@@ -44,8 +86,8 @@ final class OptimizationResultDto
             'optimal_blended_roas' => round($this->optimalBlendedRoas, 2),
             'revenue_gain_delta' => round($this->revenueGainDelta, 2),
             'roas_gain_delta' => round($this->roasGainDelta, 2),
-            'revenue_gain_percentage' => $this->currentTotalRevenue > 0 
-                ? round(($this->revenueGainDelta / $this->currentTotalRevenue) * 100, 2) 
+            'revenue_gain_percentage' => ($this->comparison['baseline_revenue_same_spend'] ?? 0) > 0
+                ? round(($this->revenueGainDelta / $this->comparison['baseline_revenue_same_spend']) * 100, 2)
                 : 0.0,
             'equilibrium_lambda' => round($this->equilibriumLambda, 4),
             'channel_allocations' => $this->channelAllocations,
@@ -53,6 +95,13 @@ final class OptimizationResultDto
             'frontier_curve' => $this->frontierCurve,
             'sensitivity_points' => $this->sensitivityPoints,
             'mathematical_model' => $this->mathematicalModel,
+            'status' => $this->status,
+            'status_message' => $this->statusMessage,
+            'warnings' => $this->warnings,
+            'data_sources' => $this->dataSources,
+            'gates' => $this->gates,
+            'solver_certificate' => $this->certificate,
+            'comparison' => $this->comparison,
         ];
     }
 }

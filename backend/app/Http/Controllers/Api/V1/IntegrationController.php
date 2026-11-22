@@ -25,6 +25,10 @@ class IntegrationController extends Controller
             'redirect_uri' => 'required|url',
         ]);
 
+        if (!$this->oauthManager->isAllowedRedirectUri((string) $request->redirect_uri)) {
+            return $this->redirectNotAllowed();
+        }
+
         try {
             $adapter = $this->oauthManager->getAdapter($provider);
             $state = $this->oauthManager->generateState($provider, $request->user()->id);
@@ -61,8 +65,12 @@ class IntegrationController extends Controller
             'redirect_uri' => 'required|url',
         ]);
 
+        if (!$this->oauthManager->isAllowedRedirectUri((string) $request->redirect_uri)) {
+            return $this->redirectNotAllowed();
+        }
+
         // Validate state
-        $statePayload = $this->oauthManager->validateState($request->state, $provider);
+        $statePayload = $this->oauthManager->validateState($request->state, $provider, $request->user()->id);
         if (!$statePayload) {
             return response()->json([
                 'success' => false,
@@ -137,6 +145,17 @@ class IntegrationController extends Controller
         foreach ($request->selected_account_ids as $accId) {
             $accountMeta = $discovered->get($accId);
             if (!$accountMeta) continue;
+
+            // Currency and timezone are never defaulted: a missing value stops the connect for that account.
+            if (empty($accountMeta['currency']) || empty($accountMeta['timezone'])) {
+                return response()->json([
+                    'success' => false,
+                    'error' => [
+                        'code' => 'ACCOUNT_METADATA_MISSING',
+                        'message' => "The provider did not return a currency or timezone for '{$accountMeta['account_name']}' ({$accId}), so it was not connected. Nothing was assumed.",
+                    ],
+                ], 422);
+            }
 
             // Prevent account hijacking across tenants (SEC-POST-02)
             $existing = ConnectedAdAccount::where('provider', $provider)
@@ -230,7 +249,7 @@ class IntegrationController extends Controller
         $account = ConnectedAdAccount::findOrFail($id);
 
         // Enforce tenancy / ownership check (SEC-001 / SEC-POST-03)
-        if ($account->user_id !== $request->user()->id && !$request->user()->hasAnyRole(['Owner', 'Admin'])) {
+        if ($account->user_id !== $request->user()->id) {
             return response()->json([
                 'success' => false,
                 'error' => [
@@ -251,5 +270,16 @@ class IntegrationController extends Controller
             'success' => true,
             'message' => "Disconnected account '{$account->account_name}'.",
         ]);
+    }
+
+    private function redirectNotAllowed(): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'error' => [
+                'code' => 'REDIRECT_URI_NOT_ALLOWED',
+                'message' => 'This redirect URI is not on the server allowlist (OAUTH_ALLOWED_REDIRECT_URIS). It must match what is registered with the provider.',
+            ],
+        ], 422);
     }
 }

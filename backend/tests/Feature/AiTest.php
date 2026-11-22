@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\AiAuditLog;
 use App\Models\AiConfig;
+use App\Models\ConnectedAdAccount;
+use App\Models\PerformanceMetric;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Http;
@@ -18,6 +20,8 @@ class AiTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Tests must never reach a real provider: any request without an explicit fake fails.
+        Http::preventStrayRequests();
 
         $this->user = User::firstOrCreate(
             ['email' => 'ai_tester@example.com'],
@@ -105,16 +109,10 @@ class AiTest extends TestCase
             'is_active' => true,
         ]);
 
+        $this->seedMetricsFor($this->user);
+
         $response = $this->actingAs($this->user, 'sanctum')
-            ->postJson('/api/v1/ai/analyze-performance', [
-                'metrics' => [
-                    'campaign_name' => 'Black Friday Retargeting',
-                    'spend' => 1500.00,
-                    'conversions' => 45,
-                    'roas' => 3.2,
-                    'ctr' => 1.8,
-                ],
-            ]);
+            ->postJson('/api/v1/ai/analyze-performance', []);
 
         $response->assertStatus(200)
             ->assertJsonStructure([
@@ -247,8 +245,65 @@ class AiTest extends TestCase
             ]);
     }
 
+    private function seedMetricsFor(User $user): void
+    {
+        $account = ConnectedAdAccount::create([
+            'user_id' => $user->id,
+            'provider' => 'meta',
+            'external_account_id' => 'test-' . uniqid(),
+            'account_name' => 'Test account',
+            'access_token' => 'x',
+        ]);
+        PerformanceMetric::create([
+            'connected_ad_account_id' => $account->id,
+            'provider' => 'meta',
+            'date' => now()->subDay()->toDateString(),
+            'spend' => 1500,
+            'impressions' => 100000,
+            'clicks' => 1800,
+            'conversions' => 45,
+            'conversion_value' => 4800,
+        ]);
+    }
+
+    public function test_analyze_performance_abstains_without_synced_data(): void
+    {
+        AiConfig::create([
+            'user_id' => $this->user->id, 'provider' => 'openai', 'api_key' => 'sk-mock-test',
+            'model' => 'gpt-4o', 'is_active' => true,
+        ]);
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson('/api/v1/ai/analyze-performance', ['metrics' => [['spend' => 999]]])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'INSUFFICIENT_DATA');
+    }
+
+    public function test_user_never_uses_another_tenants_ai_config(): void
+    {
+        $other = User::firstOrCreate(
+            ['email' => 'other_tenant@example.com'],
+            ['name' => 'Other', 'password' => bcrypt('password123'), 'status' => 'active']
+        );
+        AiConfig::where('user_id', $this->user->id)->delete();
+        AiConfig::create([
+            'user_id' => $other->id, 'provider' => 'openai', 'api_key' => 'sk-other-secret',
+            'model' => 'gpt-4o', 'is_active' => true,
+        ]);
+        Http::fake();
+
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson('/api/v1/ai/chat', ['messages' => [['role' => 'user', 'content' => 'hi']]]);
+
+        Http::assertNothingSent();
+        $this->assertSame(0, AiAuditLog::where('user_id', $other->id)->count());
+    }
+
     public function test_ai_chat_returns_data_analysis(): void
     {
+        AiConfig::create([
+            'user_id' => $this->user->id, 'provider' => 'openai', 'api_key' => 'sk-mock-test',
+            'model' => 'gpt-4o', 'is_active' => true,
+        ]);
         $response = $this->actingAs($this->user, 'sanctum')
             ->postJson('/api/v1/ai/chat', [
                 'messages' => [
@@ -294,5 +349,42 @@ class AiTest extends TestCase
                     'provider' => 'custom',
                 ],
             ]);
+    }
+
+    public function test_analysis_never_mixes_currencies_into_one_figure(): void
+    {
+        $account = ConnectedAdAccount::create([
+            'user_id' => $this->user->id, 'provider' => 'meta', 'external_account_id' => 'cur-' . uniqid(),
+            'account_name' => 'EUR', 'access_token' => 'x',
+        ]);
+        foreach ([['USD', 100], ['EUR', 200]] as [$cur, $spend]) {
+            PerformanceMetric::create([
+                'connected_ad_account_id' => $account->id, 'provider' => 'meta', 'currency' => $cur,
+                'date' => now()->subDay()->toDateString(),
+                'spend' => $spend, 'impressions' => 1000, 'clicks' => 10, 'conversions' => 1, 'conversion_value' => 300,
+            ]);
+        }
+        $r = $this->actingAs($this->user, 'sanctum')->postJson('/api/v1/ai/analyze-performance', []);
+        $this->assertSame(422, $r->status());
+        $this->assertSame('MIXED_CURRENCY', $r->json('error.code'));
+    }
+
+    public function test_fake_provider_keys_are_rejected_outside_testing_environment(): void
+    {
+        AiConfig::where('user_id', $this->user->id)->delete();
+        AiConfig::create([
+            'user_id' => $this->user->id, 'provider' => 'openai', 'api_key' => 'sk-mock-anything',
+            'model' => 'gpt-4o', 'is_active' => true,
+        ]);
+        $this->seedMetricsFor($this->user);
+
+        $this->app['env'] = 'production';
+        config(['ai.allow_fake_provider' => true]); // must still be ignored in production
+
+        $r = $this->actingAs($this->user, 'sanctum')->postJson('/api/v1/ai/analyze-performance', []);
+        $this->assertSame(400, $r->status());
+        $this->assertFalse($r->json('success'));
+        $this->assertArrayNotHasKey('analysis', $r->json());
+        Http::assertNothingSent();
     }
 }

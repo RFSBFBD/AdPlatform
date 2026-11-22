@@ -1200,21 +1200,17 @@ export class AiCenterFeatureComponent implements OnInit {
 
   runAnalysis(): void {
     this.isAnalyzing.set(true);
-    const mockMetrics = [
-      { name: 'Core Campaign', spend: 850, conversions: 32, roas: 3.8, ctr: 2.1 },
-    ];
-
-    this.http.post<{ success: boolean; analysis: AnalysisDto }>('/api/v1/ai/analyze-performance', {
-      metrics: mockMetrics,
-    }).subscribe({
+    // The server builds the metrics from the user's own synced data; the client sends no numbers.
+    this.http.post<{ success: boolean; analysis: AnalysisDto }>('/api/v1/ai/analyze-performance', {}).subscribe({
       next: (res) => {
         this.isAnalyzing.set(false);
         if (res.success) {
           this.analysisResult.set(res.analysis);
         }
       },
-      error: () => {
+      error: (err) => {
         this.isAnalyzing.set(false);
+        this.showFeedback(err.error?.error?.message || 'Analysis is unavailable right now.', 'error');
       }
     });
   }

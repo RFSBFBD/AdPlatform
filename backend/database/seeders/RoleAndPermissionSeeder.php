@@ -58,12 +58,19 @@ class RoleAndPermissionSeeder extends Seeder
             'view-analytics',
         ]);
 
-        // Default initial admin if not present
+        // Bootstrap owner. There is no built-in password: it comes from ADMIN_BOOTSTRAP_PASSWORD.
+        // In production, without that variable no owner is created. Elsewhere a random one is generated
+        // (reset it with the password-reset flow).
+        $bootstrapPassword = env('ADMIN_BOOTSTRAP_PASSWORD');
+        if (!$bootstrapPassword && app()->environment('production')) {
+            return;
+        }
+
         $owner = User::firstOrCreate(
-            ['email' => 'admin@adplatform.local'],
+            ['email' => env('ADMIN_BOOTSTRAP_EMAIL', 'admin@adplatform.local')],
             [
                 'name' => 'System Owner',
-                'password' => Hash::make('AdminSecurePassword2026!'),
+                'password' => Hash::make($bootstrapPassword ?: \Illuminate\Support\Str::random(32)),
                 'status' => 'active',
             ]
         );

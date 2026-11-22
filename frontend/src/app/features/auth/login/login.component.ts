@@ -221,8 +221,8 @@ export class LoginComponent {
   readonly showPassword = signal<boolean>(false);
 
   readonly loginForm = this.fb.nonNullable.group({
-    email: ['admin@adplatform.local', [Validators.required, Validators.email]],
-    password: ['AdminSecurePassword2026!', [Validators.required, Validators.minLength(6)]],
+    email: ['', [Validators.required, Validators.email]],
+    password: ['', [Validators.required, Validators.minLength(6)]],
   });
 
   isFieldInvalid(fieldName: 'email' | 'password'): boolean {

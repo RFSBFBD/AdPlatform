@@ -16,7 +16,7 @@ class DeveloperConfigTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->seed(RoleAndPermissionSeeder::class);
+        (new RoleAndPermissionSeeder())->run(); // direct run: avoids artisan in php-wasm
     }
 
     public function test_unauthorized_user_cannot_read_developer_configs(): void

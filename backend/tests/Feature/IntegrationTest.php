@@ -9,6 +9,7 @@ use Database\Seeders\RoleAndPermissionSeeder;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class IntegrationTest extends TestCase
@@ -21,7 +22,9 @@ class IntegrationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->seed(RoleAndPermissionSeeder::class);
+        Http::preventStrayRequests();
+        config(['oauth.allowed_redirect_uris' => ['https://adplatform.local/callback']]);
+        (new RoleAndPermissionSeeder())->run(); // direct run: avoids artisan in php-wasm
         $this->owner = User::where('email', 'admin@adplatform.local')->first();
         $this->token = $this->owner->createToken('test_token')->plainTextToken;
 
@@ -216,5 +219,53 @@ class IntegrationTest extends TestCase
         // Verify account ownership did NOT change
         $account = ConnectedAdAccount::where('external_account_id', 'act_takeover_target_999')->first();
         $this->assertEquals($this->owner->id, $account->user_id);
+    }
+
+    public function test_oauth_state_is_bound_to_the_user_who_started_the_flow(): void
+    {
+        $manager = new \App\Services\Advertising\OAuthManager();
+        $state = $manager->generateState('meta', $this->owner->id);
+        // A different user cannot consume it, and it is single-use either way.
+        $this->assertNull($manager->validateState($state, 'meta', $this->owner->id + 999));
+        // The wrong user's attempt must not burn the legitimate user's state.
+        $this->assertNotNull($manager->validateState($state, 'meta', $this->owner->id));
+        $this->assertNull($manager->validateState($state, 'meta', $this->owner->id));
+    }
+
+    public function test_oauth_state_is_bound_to_provider_and_single_use(): void
+    {
+        $manager = new \App\Services\Advertising\OAuthManager();
+        $state = $manager->generateState('meta', $this->owner->id);
+        $this->assertNull($manager->validateState($state, 'google', $this->owner->id));
+
+        $state2 = $manager->generateState('meta', $this->owner->id);
+        $this->assertNotNull($manager->validateState($state2, 'meta', $this->owner->id));
+        $this->assertNull($manager->validateState($state2, 'meta', $this->owner->id));
+    }
+
+    public function test_redirect_uri_must_be_on_server_allowlist(): void
+    {
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->getJson('/api/v1/integrations/oauth/meta/redirect?redirect_uri=https://evil.example/steal')
+            ->assertStatus(422)->assertJsonPath('error.code', 'REDIRECT_URI_NOT_ALLOWED');
+
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->getJson('/api/v1/integrations/oauth/meta/callback?code=c&state=s&redirect_uri=https://evil.example/steal')
+            ->assertStatus(422)->assertJsonPath('error.code', 'REDIRECT_URI_NOT_ALLOWED');
+
+        config(['oauth.allowed_redirect_uris' => []]);
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->getJson('/api/v1/integrations/oauth/meta/redirect?redirect_uri=https://adplatform.local/callback')
+            ->assertStatus(422);
+    }
+
+    public function test_callback_with_another_users_state_is_rejected_before_any_provider_call(): void
+    {
+        $manager = new \App\Services\Advertising\OAuthManager();
+        $state = $manager->generateState('meta', $this->owner->id + 999);
+        $this->withHeader('Authorization', 'Bearer ' . $this->token)
+            ->getJson('/api/v1/integrations/oauth/meta/callback?code=c&state=' . $state . '&redirect_uri=https://adplatform.local/callback')
+            ->assertStatus(400)->assertJsonPath('error.code', 'INVALID_OAUTH_STATE');
+        Http::assertNothingSent();
     }
 }

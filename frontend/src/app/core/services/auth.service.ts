@@ -1,7 +1,8 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
-import { Observable, tap, catchError, throwError, of } from 'rxjs';
+import { Observable, tap, map, catchError, throwError } from 'rxjs';
+import { ALLOW_PREVIEW_SESSION, PREVIEW_TOKEN_PREFIX } from '../config/runtime';
 
 export interface UserProfile {
   id: number;
@@ -38,48 +39,57 @@ export class AuthService {
   login(credentials: { email: string; password: string }): Observable<LoginResponse> {
     return this.http.post<LoginResponse>('/api/v1/auth/login', credentials).pipe(
       tap((res) => {
-        if (res.success && res.data.token) {
+        if (res?.success && res.data?.token && !res.data.token.startsWith(PREVIEW_TOKEN_PREFIX)) {
           this.setSession(res.data.user, res.data.token);
         }
       }),
-      catchError((err) => {
-        // If in cloud preview (e.g. Vercel) or local backend is unreachable
-        const isCloudEnv = typeof window !== 'undefined' && !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1');
-        const isBackendUnreachable = err.status === 404 || err.status === 0 || err.status === 502 || err.status === 504 || (err.error && typeof err.error === 'string' && err.error.includes('<!doctype html>'));
-
-        if (isCloudEnv || isBackendUnreachable) {
-          const fallbackUser: UserProfile = {
-            id: 1175,
-            uuid: 'ba64ce05-7e03-44c1-acbc-d435d1bb8ca2',
-            name: credentials.email ? credentials.email.split('@')[0] : 'System Owner',
-            email: credentials.email || 'admin@adplatform.com',
-            status: 'active',
-            roles: ['Owner', 'Admin'],
-            permissions: [
-              'view-analytics',
-              'export-reports',
-              'manage-accounts',
-              'sync-campaigns',
-              'manage-billing',
-              'manage-developers',
-              'manage-users',
-              'manage-ai'
-            ],
-          };
-          const fallbackToken = 'preview_cloud_token_' + Math.random().toString(36).substring(2);
-          this.setSession(fallbackUser, fallbackToken);
-          return of({
-            success: true,
-            data: {
-              user: fallbackUser,
-              token: fallbackToken,
-              token_type: 'Bearer',
-            }
-          });
+      map((res) => {
+        if (!this.isAuthenticated()) {
+          // e.g. an HTML page served instead of the API: not a real login.
+          throw { status: 0 };
         }
-        return throwError(() => err);
-      })
+        return res;
+      }),
+      catchError((err) => throwError(() => this.toLoginError(err, credentials.email)))
     );
+  }
+
+  /** True only when the current session is a demo preview, not a backend-issued session. */
+  readonly isPreviewSession = computed(() => (this.token() ?? '').startsWith(PREVIEW_TOKEN_PREFIX));
+
+  /** Starts an explicit, clearly labelled demo session. Disabled unless ALLOW_PREVIEW_SESSION is true. */
+  startPreviewSession(): boolean {
+    if (!ALLOW_PREVIEW_SESSION) {
+      return false;
+    }
+    const previewUser: UserProfile = {
+      id: 0,
+      uuid: 'preview',
+      name: 'Preview (not signed in)',
+      email: 'preview@local',
+      status: 'preview',
+      roles: ['Preview'],
+      permissions: ['view-analytics'],
+    };
+    this.setSession(previewUser, PREVIEW_TOKEN_PREFIX + Math.random().toString(36).substring(2));
+    return true;
+  }
+
+  /** Turns transport/backend failures into an honest error, never a fake session. */
+  toLoginError(err: any, _email?: string): { status: number; error: { error: { message: string } } } {
+    const status: number = err?.status ?? 0;
+    const apiMessage = err?.error?.error?.message;
+    let message: string;
+    if (apiMessage) {
+      message = apiMessage;
+    } else if (status === 401 || status === 422) {
+      message = 'Login failed. Please check your credentials.';
+    } else if (status === 429) {
+      message = 'Too many attempts. Try again later.';
+    } else {
+      message = 'The authentication service is unavailable (the API did not respond correctly). You are not signed in.';
+    }
+    return { status, error: { error: { message } } };
   }
 
   logout(): void {
@@ -122,13 +132,19 @@ export class AuthService {
 
   private loadStoredToken(): string | null {
     if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem(this.tokenKey);
+      const t = localStorage.getItem(this.tokenKey);
+      if (t && t.startsWith(PREVIEW_TOKEN_PREFIX) && !ALLOW_PREVIEW_SESSION) {
+        localStorage.removeItem(this.tokenKey);
+        localStorage.removeItem(this.userKey);
+        return null;
+      }
+      return t;
     }
     return null;
   }
 
   private loadStoredUser(): UserProfile | null {
-    if (typeof localStorage !== 'undefined') {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem(this.tokenKey)) {
       const stored = localStorage.getItem(this.userKey);
       if (stored) {
         try {

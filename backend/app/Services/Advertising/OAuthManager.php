@@ -4,6 +4,7 @@ namespace App\Services\Advertising;
 
 use App\Services\Advertising\Adapters\GoogleAdsAdapter;
 use App\Services\Advertising\Adapters\MetaAdsAdapter;
+use App\Services\Advertising\Adapters\SnapchatAdsAdapter;
 use App\Services\Advertising\Adapters\TikTokAdsAdapter;
 use App\Services\Advertising\Contracts\AdvertisingProviderInterface;
 use Illuminate\Support\Facades\Cache;
@@ -18,8 +19,18 @@ class OAuthManager
             'meta' => new MetaAdsAdapter(),
             'google' => new GoogleAdsAdapter(),
             'tiktok' => new TikTokAdsAdapter(),
+            'snapchat' => new SnapchatAdsAdapter(),
             default => throw new InvalidArgumentException("Unsupported advertising provider: '{$provider}'"),
         };
+    }
+
+    /**
+     * Exact-match allowlist from config/oauth.php. The client never chooses a redirect target;
+     * an empty list means every redirect is refused.
+     */
+    public function isAllowedRedirectUri(string $uri): bool
+    {
+        return in_array($uri, (array) config('oauth.allowed_redirect_uris', []), true);
     }
 
     public function generateState(string $provider, int $userId): string
@@ -37,13 +48,19 @@ class OAuthManager
         return $state;
     }
 
-    public function validateState(string $state, string $expectedProvider): ?array
+    public function validateState(string $state, string $expectedProvider, int $expectedUserId): ?array
     {
-        $payload = Cache::pull("oauth_state:{$state}");
+        $key = "oauth_state:{$state}";
+        $payload = Cache::get($key);
 
-        if (!$payload || ($payload['provider'] !== $expectedProvider)) {
+        // Check provider AND user BEFORE consuming: someone else's attempt must not burn the real user's state.
+        if (!$payload
+            || ($payload['provider'] ?? null) !== $expectedProvider
+            || (int) ($payload['user_id'] ?? 0) !== $expectedUserId) {
             return null;
         }
+
+        Cache::forget($key); // single use
 
         return $payload;
     }

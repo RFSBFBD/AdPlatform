@@ -1,4 +1,5 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { SuggestionsComponent, Suggestion } from './suggestions.component';
+import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
@@ -16,6 +17,9 @@ export interface ChannelAllocation {
   optimal_roas: number;
   delta_spend: number;
   delta_spend_percentage: number;
+  delta_vs_baseline: number;
+  delta_vs_baseline_percentage: number;
+  lift_vs_baseline: number;
   marginal_roas_current: number;
   marginal_roas_optimal: number;
   action: 'SCALE_UP' | 'SCALE_DOWN' | 'MAINTAIN';
@@ -51,12 +55,18 @@ export interface OperationsResearchData {
   frontier_curve: FrontierPoint[];
   sensitivity_points: Record<string, { channel: string; display_name: string; curve: any[] }>;
   mathematical_model: string;
+  status?: 'ok' | 'insufficient_data' | 'infeasible' | 'constraints_required' | 'no_allocation' | 'mixed_currency' | 'currency_mismatch' | 'exceeds_user_cap';
+  status_message?: string | null;
+  warnings?: string[];
+  comparison?: { observed_spend: number; observed_revenue_on_curve: number; reference_spend: number; baseline_revenue_same_spend: number; baseline_roas_same_spend: number; reallocation_gain: number; spend_change_vs_observed: number; revenue_change_vs_observed: number; definition: string };
+  solver_certificate?: { budget_residual: number; budget_tolerance: number; stationarity_residual: number; stationarity_tolerance: number; within_bounds: boolean; scope: string };
+  data_sources?: string[];
 }
 
 @Component({
   selector: 'app-operations-research-feature',
   standalone: true,
-  imports: [CommonModule, FormsModule, ButtonComponent, IconComponent],
+  imports: [CommonModule, FormsModule, ButtonComponent, IconComponent, SuggestionsComponent],
   template: `
     <div class="or-page">
       <!-- Header -->
@@ -64,46 +74,114 @@ export interface OperationsResearchData {
         <div>
           <div class="header-badge-row">
             <h2 class="title">Operations Research Budget Optimizer</h2>
-            <span class="math-badge">Deterministic Convex KKT Model (100% Math)</span>
+            <span class="math-badge">Deterministic solver on an assumed response curve (estimate)</span>
           </div>
           <p class="subtitle">
-            Non-linear diminishing marginal returns algorithm solves optimal cross-channel capital allocation across Meta, Google, and TikTok without stochastic LLM variation.
+            Non-linear diminishing marginal returns algorithm solves optimal cross-channel capital allocation across the channels with enough data (Meta, Google, TikTok, Snapchat) without stochastic LLM variation.
           </p>
         </div>
 
         <div class="budget-controller">
-          <label class="budget-label">Total Monthly Budget</label>
-          <div class="budget-input-row">
-            <span class="currency-prefix">&#36;</span>
-            <input 
-              type="number" 
-              [ngModel]="targetBudget()" 
-              (ngModelChange)="targetBudget.set($event)"
-              (keyup.enter)="solveOptimization()"
-              min="1000" 
-              max="500000" 
-              step="500"
-              class="budget-input"
-            />
-            <app-button variant="primary" [loading]="isLoading()" (clicked)="solveOptimization()">
-              Solve Model
-            </app-button>
+          <div class="bc-field">
+            <label class="budget-label" for="or_budget">Budget amount (profile currency)</label>
+            <input id="or_budget" type="number" [ngModel]="targetBudget()" (ngModelChange)="targetBudget.set($event)"
+              (keyup.enter)="solveOptimization()" min="100" max="500000" step="500" class="budget-input" />
           </div>
+          <div class="bc-field">
+            <label class="budget-label" for="or_horizon">Budget period</label>
+            <select id="or_horizon" [ngModel]="horizon()" (ngModelChange)="horizon.set($event)" class="budget-input">
+              <option [ngValue]="null">Select…</option>
+              <option value="per_30_days">per 30 days</option>
+              <option value="daily">per day (x30)</option>
+            </select>
+          </div>
+          <div class="bc-field">
+            <label class="budget-label" for="or_sat" title="Explicit assumption: revenue ceiling as a multiple of observed revenue. Not defaulted.">Saturation multiplier (assumption)</label>
+            <input id="or_sat" type="number" [ngModel]="saturation()" (ngModelChange)="saturation.set($event)"
+              (keyup.enter)="solveOptimization()" min="1.1" max="20" step="0.1" placeholder="e.g. 3" class="budget-input" />
+          </div>
+          <div class="bc-field">
+            <label class="budget-label" for="or_mode" title="exact spends the whole budget; at_most may spend less if the marginal return is below your minimum.">Budget mode</label>
+            <select id="or_mode" [ngModel]="mode()" (ngModelChange)="mode.set($event)" class="budget-input">
+              <option [ngValue]="null">Not set</option>
+              <option value="exact">exact (spend all)</option>
+              <option value="at_most">at most (may spend less)</option>
+            </select>
+          </div>
+          <div class="bc-field">
+            <label class="budget-label" for="or_minroas" title="Stop spending where the marginal ROAS falls below this value.">Min marginal ROAS (at most only)</label>
+            <input id="or_minroas" type="number" [ngModel]="minRoas()" (ngModelChange)="minRoas.set($event)" [disabled]="mode() !== 'at_most'" min="0.01" step="0.1" placeholder="only with at most" class="budget-input" />
+          </div>
+          <div class="bc-field">
+            <label class="budget-label" for="or_lh">Channel limits period</label>
+            <select id="or_lh" [ngModel]="limitsHorizon()" (ngModelChange)="limitsHorizon.set($event)" class="budget-input">
+              <option [ngValue]="null">No limits</option>
+              <option value="per_30_days">per 30 days</option>
+              <option value="daily">per day</option>
+            </select>
+          </div>
+          @if (limitsHorizon()) {
+            @for (ch of channels; track ch) {
+              <div class="bc-field" [attr.data-limits]="ch">
+                <span class="budget-label">{{ ch }} min / max</span>
+                <div style="display:flex;gap:6px">
+                  <input [id]="'or_min_' + ch" type="number" min="0" placeholder="min" [ngModel]="limits()[ch].min" (ngModelChange)="setLimit(ch,'min',$event)" class="budget-input" />
+                  <input [id]="'or_max_' + ch" type="number" min="0" placeholder="max" [ngModel]="limits()[ch].max" (ngModelChange)="setLimit(ch,'max',$event)" class="budget-input" />
+                </div>
+              </div>
+            }
+          }
+          @if (validationErrors().length) {
+            <div class="or-validation" role="alert" style="flex-basis:100%;color:#f87171;font-size:13px">
+              @for (e of validationErrors(); track e) { <div>{{ e }}</div> }
+            </div>
+          }
+          <app-button variant="primary" [loading]="isLoading()" [disabled]="validationErrors().length > 0" (clicked)="solveOptimization()">Solve Model</app-button>
+          
         </div>
       </div>
 
+      @if (rawData() && !data()) {
+        <div class="or-stale" role="status" style="padding:12px;margin:12px 0;border:1px solid #f59e0b;border-radius:8px;background:rgba(245,158,11,.1)">
+          <strong>Inputs changed.</strong> The previous result is hidden because it was computed for different inputs. Press Solve Model.
+        </div>
+      }
+      @if (data() && data()?.status !== 'ok') {
+        <div class="or-status" role="status" style="padding:16px;margin:16px 0;border:1px solid #f59e0b;border-radius:8px;background:rgba(245,158,11,.1)">
+          <strong>{{ data()?.status === 'infeasible' ? 'No allocation fits the stated limits' : (data()?.status === 'constraints_required' ? 'Budget and assumption required' : (data()?.status === 'no_allocation' ? 'No allocation: nothing clears your minimum marginal ROAS' : 'No scenario produced')) }}</strong>
+          <p style="margin:6px 0 0">{{ data()?.status_message }}</p>
+        </div>
+      }
+      @if (data()?.warnings?.length) {
+        <div class="or-warnings" role="note" aria-label="Warnings and excluded channels" style="padding:12px;margin:12px 0;border-radius:8px;background:rgba(99,102,241,.08);font-size:13px">
+          <strong>{{ data()?.status === 'ok' ? 'Read before using this scenario' : 'Why no numbers were produced' }}</strong>
+          @for (w of data()?.warnings; track w) { <div>{{ w }}</div> }
+        </div>
+      }
+
+      @if (data()?.status === 'ok' && data()?.solver_certificate; as c) {
+        <div class="or-warnings" role="note" style="padding:12px;margin:12px 0;border-radius:8px;background:rgba(16,185,129,.08);font-size:13px">
+          <strong>Solver check passed</strong>
+          <div>Budget gap {{ c.budget_residual | number:'1.0-8' }} (allowed {{ c.budget_tolerance | number:'1.0-8' }}); optimality gap {{ c.stationarity_residual | number:'1.0-10' }} (allowed {{ c.stationarity_tolerance | number:'1.0-8' }}); limits respected: {{ c.within_bounds ? 'yes' : 'no' }}.</div>
+          <div>{{ c.scope }}</div>
+        </div>
+      }
+
+      @if (data()) { <app-suggestions [items]="sugItems()" [snapshotId]="snapshotId()" [query]="suggestQuery()"></app-suggestions> }
+
       <!-- Key KPI Cards -->
-      @if (data()) {
+      @if (data()?.status === 'ok') {
         <div class="kpi-grid">
           <!-- Total Optimal Revenue -->
           <div class="kpi-card highlight">
             <div class="kpi-header">
-              <span class="kpi-label">Optimal Expected Revenue</span>
-              <span class="kpi-pill success">+{{ data()!.revenue_gain_percentage }}% Gain</span>
+              <span class="kpi-label">Scenario Revenue (assumed curve)</span>
+              <span class="kpi-pill success">{{ data()!.revenue_gain_delta >= 0 ? '+' : '' }}{{ data()!.revenue_gain_percentage }}% vs same-spend mix</span>
             </div>
-            <div class="kpi-value">&#36;{{ data()!.optimal_total_revenue | number:'1.0-0' }}</div>
+            <div class="kpi-value">{{ data()!.optimal_total_revenue | number:'1.0-0' }}</div>
             <div class="kpi-subtext">
-              Baseline: &#36;{{ data()!.current_total_revenue | number:'1.0-0' }} (+&#36;{{ data()!.revenue_gain_delta | number:'1.0-0' }} net lift)
+              Reallocation effect: {{ data()!.revenue_gain_delta >= 0 ? '+' : '' }}{{ data()!.revenue_gain_delta | number:'1.0-0' }} against your current mix at the same total spend ({{ data()?.comparison?.reference_spend | number:'1.0-0' }}).
+              Versus the observed 30 days: spend {{ (data()?.comparison?.spend_change_vs_observed ?? 0) >= 0 ? '+' : '' }}{{ data()?.comparison?.spend_change_vs_observed | number:'1.0-0' }}, revenue {{ (data()?.comparison?.revenue_change_vs_observed ?? 0) >= 0 ? '+' : '' }}{{ data()?.comparison?.revenue_change_vs_observed | number:'1.0-0' }}. Not profit.
             </div>
           </div>
 
@@ -111,11 +189,11 @@ export interface OperationsResearchData {
           <div class="kpi-card">
             <div class="kpi-header">
               <span class="kpi-label">Optimized Blended ROAS</span>
-              <span class="kpi-pill info">+{{ data()!.roas_gain_delta | number:'1.2-2' }}x</span>
+              <span class="kpi-pill info">{{ data()!.roas_gain_delta >= 0 ? '+' : '' }}{{ data()!.roas_gain_delta | number:'1.2-2' }}x vs same-spend mix</span>
             </div>
             <div class="kpi-value">{{ data()!.optimal_blended_roas | number:'1.2-2' }}x</div>
             <div class="kpi-subtext">
-              Current Portfolio ROAS: {{ data()!.current_blended_roas | number:'1.2-2' }}x
+              Same-spend mix ROAS: {{ data()?.comparison?.baseline_roas_same_spend | number:'1.2-2' }}x. Observed ROAS: {{ data()!.current_blended_roas | number:'1.2-2' }}x
             </div>
           </div>
 
@@ -123,7 +201,7 @@ export interface OperationsResearchData {
           <div class="kpi-card">
             <div class="kpi-header">
               <span class="kpi-label">Equilibrium Threshold (&lambda;*)</span>
-              <span class="kpi-pill">KKT Optimal</span>
+              <span class="kpi-pill">Solver optimum (assumed curve)</span>
             </div>
             <div class="kpi-value">{{ data()!.equilibrium_lambda | number:'1.3-3' }}x</div>
             <div class="kpi-subtext">
@@ -134,12 +212,12 @@ export interface OperationsResearchData {
           <!-- Optimization Solver Status -->
           <div class="kpi-card">
             <div class="kpi-header">
-              <span class="kpi-label">Mathematical Guarantee</span>
-              <span class="kpi-pill success">100% Exact</span>
+              <span class="kpi-label">Solver result</span>
+              <span class="kpi-pill success">Within tolerance</span>
             </div>
-            <div class="kpi-value text-base">Global Optimal</div>
+            <div class="kpi-value text-base">Optimal on assumed curve</div>
             <div class="kpi-subtext">
-              Strictly concave objective with zero stochastic noise
+              Optimal only for the assumed response curve. Not a forecast of real results.
             </div>
           </div>
         </div>
@@ -175,9 +253,9 @@ export interface OperationsResearchData {
                 <line x1="50" y1="200" x2="570" y2="200" stroke="rgba(255,255,255,0.12)"/>
 
                 <!-- Y-Axis Labels -->
-                <text x="40" y="24" fill="#94a3b8" font-size="10" text-anchor="end">&#36;{{ getMaxFrontierRevenue() | number:'1.0-0' }}</text>
-                <text x="40" y="114" fill="#94a3b8" font-size="10" text-anchor="end">&#36;{{ (getMaxFrontierRevenue() / 2) | number:'1.0-0' }}</text>
-                <text x="40" y="204" fill="#94a3b8" font-size="10" text-anchor="end">&#36;0</text>
+                <text x="40" y="24" fill="#94a3b8" font-size="10" text-anchor="end">{{ getMaxFrontierRevenue() | number:'1.0-0' }}</text>
+                <text x="40" y="114" fill="#94a3b8" font-size="10" text-anchor="end">{{ (getMaxFrontierRevenue() / 2) | number:'1.0-0' }}</text>
+                <text x="40" y="204" fill="#94a3b8" font-size="10" text-anchor="end">0</text>
 
                 <!-- Frontier Area & Line -->
                 <path [attr.d]="getFrontierAreaPath()" fill="url(#frontier-fill)"/>
@@ -203,7 +281,7 @@ export interface OperationsResearchData {
             <div class="card-header">
               <div>
                 <h3 class="card-title">Optimal Budget Reallocation</h3>
-                <p class="card-desc">Current spend vs mathematically recommended allocation per platform.</p>
+                <p class="card-desc">Current spend vs scenario allocation (assumed curve) per platform.</p>
               </div>
               <div class="legend-row">
                 <span class="legend-item"><span class="dot current-bar-dot"></span> Current</span>
@@ -220,7 +298,7 @@ export interface OperationsResearchData {
                       <span class="channel-title">{{ c.display_name }}</span>
                     </div>
                     <span [class]="'action-pill ' + c.action.toLowerCase()">
-                      {{ c.action === 'SCALE_UP' ? 'Scale +' + c.delta_spend_percentage + '%' : (c.action === 'SCALE_DOWN' ? 'Cap ' + c.delta_spend_percentage + '%' : 'Balanced') }}
+                      {{ c.action === 'SCALE_UP' ? 'Shift +' + c.delta_vs_baseline_percentage + '% vs same-spend mix' : (c.action === 'SCALE_DOWN' ? 'Shift ' + c.delta_vs_baseline_percentage + '% vs same-spend mix' : 'Near current mix') }}
                     </span>
                   </div>
 
@@ -228,13 +306,13 @@ export interface OperationsResearchData {
                     <!-- Current Bar -->
                     <div class="bar-track">
                       <div class="bar-fill current" [style.width.%]="getBarPercent(c.current_spend)"></div>
-                      <span class="bar-value">&#36;{{ c.current_spend | number:'1.0-0' }}</span>
+                      <span class="bar-value">{{ c.current_spend | number:'1.0-0' }}</span>
                     </div>
 
                     <!-- Optimal Bar -->
                     <div class="bar-track">
                       <div class="bar-fill optimal" [style.width.%]="getBarPercent(c.optimal_spend)"></div>
-                      <span class="bar-value highlight">&#36;{{ c.optimal_spend | number:'1.0-0' }}</span>
+                      <span class="bar-value highlight">{{ c.optimal_spend | number:'1.0-0' }}</span>
                     </div>
                   </div>
                 </div>
@@ -248,7 +326,7 @@ export interface OperationsResearchData {
           <div class="section-header">
             <div>
               <h3 class="section-title">Algorithmic Decision Directives</h3>
-              <p class="section-subtitle">Deterministic instructions to capture unrealized marginal ROAS across your accounts.</p>
+              <p class="section-subtitle">Scenario steps computed on an assumed curve. Not operational advice.</p>
             </div>
           </div>
 
@@ -257,8 +335,8 @@ export interface OperationsResearchData {
               <div [class]="'directive-card ' + rec.severity.toLowerCase()">
                 <div class="directive-top">
                   <span class="directive-type">{{ rec.type | titlecase }}</span>
-                  @if (rec.projected_revenue_lift > 0) {
-                    <span class="lift-pill">+&#36;{{ rec.projected_revenue_lift | number:'1.0-0' }} Projected Lift</span>
+                  @if (rec.projected_revenue_lift !== 0) {
+                    <span class="lift-pill">{{ rec.projected_revenue_lift > 0 ? '+' : '' }}{{ rec.projected_revenue_lift | number:'1.0-0' }} vs same-spend mix</span>
                   }
                 </div>
                 <h4 class="directive-title">{{ rec.title }}</h4>
@@ -295,10 +373,10 @@ export interface OperationsResearchData {
                       <span class="font-semibold">{{ row.display_name }}</span>
                     </div>
                   </td>
-                  <td>&#36;{{ row.current_spend | number:'1.0-0' }}</td>
-                  <td class="font-semibold highlight">&#36;{{ row.optimal_spend | number:'1.0-0' }}</td>
+                  <td>{{ row.current_spend | number:'1.0-0' }}</td>
+                  <td class="font-semibold highlight">{{ row.optimal_spend | number:'1.0-0' }}</td>
                   <td [class]="row.delta_spend >= 0 ? 'text-success' : 'text-danger'">
-                    {{ row.delta_spend >= 0 ? '+' : '' }}&#36;{{ row.delta_spend | number:'1.0-0' }} ({{ row.delta_spend_percentage }}%)
+                    {{ row.delta_spend >= 0 ? '+' : '' }}{{ row.delta_spend | number:'1.0-0' }} ({{ row.delta_spend_percentage }}%)
                   </td>
                   <td>{{ row.marginal_roas_current }}x</td>
                   <td class="font-semibold">{{ row.marginal_roas_optimal }}x</td>
@@ -372,44 +450,33 @@ export interface OperationsResearchData {
     /* Budget Controller */
     .budget-controller {
       display: flex;
-      flex-direction: column;
+      flex-wrap: wrap;
       align-items: flex-end;
-      gap: 0.35rem;
+      gap: 0.75rem;
     }
-
+    .bc-note { flex: 1 1 100%; margin: 0; font-size: 0.78rem; color: var(--text-subtle); }
+    .bc-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
     .budget-label {
       font-size: 0.75rem;
       font-weight: 600;
       color: var(--text-subtle);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
     }
-
-    .budget-input-row {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      background: var(--bg-surface);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      padding: 0.25rem 0.5rem 0.25rem 0.85rem;
-      box-shadow: var(--shadow-sm);
-    }
-
-    .currency-prefix {
-      color: var(--text-muted);
-      font-weight: 700;
-    }
-
     .budget-input {
-      width: 110px;
-      border: none;
-      background: transparent;
-      font-weight: 700;
-      font-size: 1rem;
+      box-sizing: border-box;
+      width: 11rem;
+      max-width: 100%;
+      padding: 0.55rem 0.7rem;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      background: var(--bg-surface);
+      font: inherit;
+      font-size: 0.92rem;
       color: var(--text-main);
-      outline: none;
-      padding: 0.25rem;
+    }
+    .budget-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
+    @media (max-width: 640px) {
+      .bc-field, .budget-controller app-button { flex: 1 1 100%; }
+      .budget-input { width: 100%; }
     }
 
     /* KPI Grid */
@@ -817,28 +884,100 @@ export interface OperationsResearchData {
 export class OperationsResearchComponent implements OnInit {
   private readonly http = inject(HttpClient);
 
-  readonly targetBudget = signal<number>(12000);
+  readonly targetBudget = signal<number | null>(null);
+  readonly saturation = signal<number | null>(null);
+  readonly horizon = signal<'daily' | 'per_30_days' | null>(null);
+  readonly mode = signal<'exact' | 'at_most' | null>(null);
+  readonly minRoas = signal<number | null>(null);
+  readonly limitsHorizon = signal<'daily' | 'per_30_days' | null>(null);
+  readonly suggestQuery = signal<string>('');
+  readonly sugItems = signal<Suggestion[]>([]);
+  readonly snapshotId = signal<string>('');
+  private solveSeq = 0;
+  readonly channels = ['meta', 'google', 'tiktok', 'snapchat'] as const;
+  readonly limits = signal<Record<string, { min: number | null; max: number | null }>>({
+    meta: { min: null, max: null }, google: { min: null, max: null }, tiktok: { min: null, max: null }, snapchat: { min: null, max: null }
+  });
+  setLimit(ch: string, k: 'min' | 'max', v: any): void {
+    const n = v === '' || v === undefined ? null : v;
+    this.limits.update(l => ({ ...l, [ch]: { ...l[ch], [k]: n } }));
+  }
+  validationErrors(): string[] {
+    const e: string[] = [];
+    const num = (v: any) => v !== null && v !== undefined && v !== '';
+    const b = this.targetBudget();
+    if (num(b) && !(Number(b) > 0)) e.push('Budget must be greater than 0.');
+    if (num(this.saturation()) && !(Number(this.saturation()) > 1 && Number(this.saturation()) <= 20)) e.push('Saturation multiplier must be above 1 and at most 20.');
+    if (num(this.minRoas()) && this.mode() !== 'at_most') e.push('Min marginal ROAS is used only with budget mode "at most". Clear it or choose at most.');
+    if (this.mode() === 'at_most' && !(Number(this.minRoas()) > 0)) e.push('Budget mode "at most" needs a minimum marginal ROAS above 0.');
+    if (this.limitsHorizon()) {
+      let sumMin = 0;
+      let anyLimit = false;
+      for (const ch of this.channels) {
+        const { min, max } = this.limits()[ch];
+        if (num(min)) { anyLimit = true; if (!(Number(min) >= 0)) e.push(ch + ': min cannot be negative.'); else sumMin += Number(min); }
+        if (num(max)) { anyLimit = true; if (!(Number(max) > 0)) e.push(ch + ': max must be above 0.'); }
+        if (num(min) && num(max) && Number(min) > Number(max)) e.push(ch + ': min is above max.');
+        if (num(min) && num(b) && this.horizon() === this.limitsHorizon() && Number(min) > Number(b)) e.push(ch + ': minimum exceeds the budget.');
+      }
+      if (!anyLimit) e.push('Enter at least one min or max, or choose "No limits".');
+      if (num(b) && this.horizon() === this.limitsHorizon() && sumMin > Number(b)) e.push('Channel minimums add up to more than the budget.');
+    }
+    return e;
+  }
   readonly isLoading = signal<boolean>(false);
-  readonly data = signal<OperationsResearchData | null>(null);
+  readonly rawData = signal<OperationsResearchData | null>(null);
+  private readonly solvedSig = signal<string | null>(null);
+  readonly data = computed(() => (this.solvedSig() === this.inputSig() ? this.rawData() : null));
+  inputSig(): string {
+    return JSON.stringify([this.targetBudget(), this.horizon(), this.saturation(), this.mode(), this.minRoas(), this.limitsHorizon(), this.limits()]);
+  }
 
   ngOnInit(): void {
     this.solveOptimization();
   }
 
   solveOptimization(): void {
+    if (this.validationErrors().length) { return; }
     this.isLoading.set(true);
-    const budget = this.targetBudget();
-    this.http.get<{ success: boolean; data: OperationsResearchData }>('/api/v1/analytics/operations-research?budget=' + budget)
+    this.solvedSig.set(this.inputSig());
+    const params = new URLSearchParams();
+    if (this.targetBudget()) params.set('budget', String(this.targetBudget()));
+    if (this.horizon()) params.set('budget_horizon', this.horizon()!);
+    if (this.saturation()) params.set('saturation_multiplier', String(this.saturation()));
+    if (this.mode()) params.set('budget_mode', this.mode()!);
+    if (this.mode() === 'at_most' && this.minRoas()) params.set('min_marginal_roas', String(this.minRoas()));
+    if (this.limitsHorizon()) {
+      params.set('channel_limits_horizon', this.limitsHorizon()!);
+      for (const ch of this.channels) {
+        const l = this.limits()[ch];
+        if (l.min !== null && l.min !== undefined && String(l.min) !== '') params.set('channel_limits[' + ch + '][min]', String(l.min));
+        if (l.max !== null && l.max !== undefined && String(l.max) !== '') params.set('channel_limits[' + ch + '][max]', String(l.max));
+      }
+    }
+    const query = params.toString();
+    const mine = ++this.solveSeq;
+    this.http.get<{ success: boolean; data: OperationsResearchData; suggestions?: Suggestion[]; snapshot_id?: string }>('/api/v1/analytics/operations-research?' + query)
       .subscribe({
         next: res => {
+          // Only the newest solve may write: an older answer must not replace a newer result or its inputs.
+          if (mine !== this.solveSeq) return;
           this.isLoading.set(false);
-          if (res.success && res.data) {
-            this.data.set(res.data);
+          if (res?.success && res.data) {
+            this.rawData.set(res.data);
+            this.sugItems.set(Array.isArray(res.suggestions) ? res.suggestions : []);
+            this.snapshotId.set(res.snapshot_id ?? '');
+            this.suggestQuery.set(query);
+          } else {
+            this.rawData.set({ status: 'insufficient_data', status_message: 'The analysis service did not return data, so no numbers are shown.' } as OperationsResearchData);
+            this.sugItems.set([]); this.snapshotId.set('');
           }
         },
-        error: err => {
+        error: () => {
+          if (mine !== this.solveSeq) return;
           this.isLoading.set(false);
-          console.error('Failed to solve OR model:', err);
+          this.rawData.set({ status: 'insufficient_data', status_message: 'The analysis service did not respond correctly, so no numbers are shown.' } as OperationsResearchData);
+          this.sugItems.set([]); this.snapshotId.set('');
         }
       });
   }
@@ -881,7 +1020,7 @@ export class OperationsResearchComponent implements OnInit {
   }
 
   getBarPercent(spend: number): number {
-    const max = (this.targetBudget() * 0.7) || 10000;
+    const max = ((this.targetBudget() ?? 0) * 0.7) || 10000;
     return Math.min(100, Math.max(5, (spend / max) * 100));
   }
 }

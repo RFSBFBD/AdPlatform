@@ -74,7 +74,7 @@ class BillingController extends Controller
     public function invoices(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'provider' => ['nullable', 'string', 'in:meta,google,tiktok'],
+            'provider' => ['nullable', 'string', 'in:meta,google,tiktok,snapchat'],
             'status' => ['nullable', 'string', 'in:PAID,PENDING,FAILED,REFUNDED'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);

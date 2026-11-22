@@ -16,7 +16,7 @@ export interface BillingSummaryDto {
 export interface AccountProfileDto {
   account_id: number;
   account_name: string;
-  provider: 'meta' | 'google' | 'tiktok';
+  provider: 'meta' | 'google' | 'tiktok' | 'snapchat';
   currency: string;
   outstanding_balance: number;
   payment_method_type: string;
@@ -28,7 +28,7 @@ export interface InvoiceDto {
   id: number;
   external_invoice_id: string;
   account_name: string;
-  provider: 'meta' | 'google' | 'tiktok';
+  provider: 'meta' | 'google' | 'tiktok' | 'snapchat';
   invoice_date: string;
   amount: number;
   tax_amount: number;

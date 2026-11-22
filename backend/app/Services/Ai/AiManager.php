@@ -76,6 +76,19 @@ PROMPT;
     }
 
     /**
+     * Narration of an already computed evidence snapshot. Returns null when the configured key is a
+     * placeholder/test key: canned demo text is never returned as if it were an analysis.
+     */
+    public function explainSuggestions(User $user, string $systemPrompt, string $userPrompt): ?array
+    {
+        $config = $this->getActiveConfig($user);
+        if ($this->usesFakeProvider($config)) {
+            return null;
+        }
+        return $this->executeAiCompletion($config, $systemPrompt, $userPrompt, 'explain_suggestions');
+    }
+
+    /**
      * Test connection to configured AI provider with latency measurement.
      */
     public function testConnection(AiConfig $config): array
@@ -150,9 +163,7 @@ PROMPT;
         $tokensUsed = 350;
         $content = [];
 
-        $isMock = empty($config->api_key) ||
-            str_starts_with($config->api_key, 'mock_') ||
-            str_starts_with($config->api_key, 'sk-mock-');
+        $isMock = $this->usesFakeProvider($config);
 
         if (!$isMock) {
             try {
@@ -332,9 +343,7 @@ PROMPT;
         $tokensUsed = 280;
         $reply = '';
 
-        $isMock = empty($config->api_key) ||
-            str_starts_with($config->api_key, 'mock_') ||
-            str_starts_with($config->api_key, 'sk-mock-');
+        $isMock = $this->usesFakeProvider($config);
 
         if (!$isMock) {
             try {
@@ -439,26 +448,33 @@ PROMPT;
         ];
     }
 
+    /**
+     * Fake provider mode (canned output) exists only for isolated tests. It is decided server-side by the
+     * environment, never by what the user typed as a key: outside `testing` a mock-looking or empty key is
+     * rejected and no analysis is produced.
+     */
+    protected function usesFakeProvider(AiConfig $config): bool
+    {
+        $key = (string) $config->api_key;
+        $looksFake = $key === '' || str_starts_with($key, 'mock_') || str_starts_with($key, 'sk-mock-');
+        if (!$looksFake) {
+            return false;
+        }
+        if (app()->environment('testing') || (config('ai.allow_fake_provider', false) && !app()->environment('production'))) {
+            return true;
+        }
+        throw new RuntimeException('This AI provider has no valid API key. Fake or placeholder keys are rejected outside the testing environment, so no analysis was produced.');
+    }
+
     protected function getActiveConfig(User $user): AiConfig
     {
+        // Strictly per-user: never borrow another tenant's AI configuration or key.
         $config = AiConfig::where('user_id', $user->id)
             ->where('is_active', true)
             ->first();
 
         if (!$config) {
-            // Check if there is any system-wide default or fallback config
-            $config = AiConfig::where('is_active', true)->first();
-        }
-
-        if (!$config) {
-            // Create default entry
-            $config = AiConfig::create([
-                'user_id' => $user->id,
-                'provider' => 'openai',
-                'api_key' => 'mock_key_unconfigured',
-                'model' => 'gpt-4o',
-                'is_active' => true,
-            ]);
+            throw new \RuntimeException('No active AI provider is configured for your account. Add one in AI settings first.');
         }
 
         return $config;

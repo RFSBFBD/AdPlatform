@@ -8,7 +8,7 @@ import { IconComponent } from '../../shared/components/icon/icon.component';
 
 export interface ProviderConfigDto {
   id?: number;
-  provider: 'meta' | 'google' | 'tiktok';
+  provider: 'meta' | 'google' | 'tiktok' | 'snapchat';
   app_id: string | null;
   has_secret: boolean;
   masked_secret: string | null;
@@ -268,6 +268,76 @@ export interface ProviderConfigDto {
               size="sm" 
               [loading]="isTesting('tiktok')"
               (clicked)="testConfig('tiktok')"
+            >
+              <app-icon name="sync" [size]="14"></app-icon>
+              <span>Test Handshake</span>
+            </app-button>
+          </div>
+        </div>
+
+        <!-- Snapchat Ads Dev Config -->
+        <div class="config-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <div class="platform-icon">
+                <app-icon name="snapchat" [size]="24"></app-icon>
+              </div>
+              <div>
+                <h3 class="card-title">Snapchat Marketing API Credentials</h3>
+                <p class="card-desc">OAuth app client ID and client secret from Snap Business Manager (Business Details, + OAuth App). The secret is shown only once.</p>
+              </div>
+            </div>
+            <app-badge [variant]="getBadgeVariant(snapchatConfig.test_status)">
+              {{ snapchatConfig.test_status | uppercase }}
+            </app-badge>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="snapchatAppId">Snapchat Client ID</label>
+            <input 
+              id="snapchatAppId"
+              type="text" 
+              class="form-input" 
+              [(ngModel)]="snapchatConfig.app_id" 
+              placeholder="OAuth app client ID" 
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="snapchatSecret">
+              Snapchat Client Secret 
+              @if (snapchatConfig.has_secret) {
+                <span class="secure-tag">(Encrypted: {{ snapchatConfig.masked_secret }})</span>
+              }
+            </label>
+            <div class="password-wrapper">
+              <input 
+                id="snapchatSecret"
+                [type]="showSnapchatSecret() ? 'text' : 'password'" 
+                class="form-input" 
+                [(ngModel)]="snapchatSecretInput" 
+                [placeholder]="snapchatConfig.has_secret ? 'Enter new secret to rotate' : 'Enter app secret'" 
+              />
+              <button type="button" class="toggle-pwd" (click)="showSnapchatSecret.update(v => !v)">
+                <app-icon [name]="showSnapchatSecret() ? 'eye-off' : 'eye'" [size]="15"></app-icon>
+              </button>
+            </div>
+          </div>
+
+          <div class="card-actions">
+            <app-button 
+              variant="primary" 
+              size="sm" 
+              [loading]="isSaving('snapchat')"
+              (clicked)="saveConfig('snapchat')"
+            >
+              Save Snapchat Configuration
+            </app-button>
+            <app-button 
+              variant="outline" 
+              size="sm" 
+              [loading]="isTesting('snapchat')"
+              (clicked)="testConfig('snapchat')"
             >
               <app-icon name="sync" [size]="14"></app-icon>
               <span>Test Handshake</span>
@@ -570,6 +640,7 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
   readonly showGoogleSecret = signal<boolean>(false);
   readonly showGoogleToken = signal<boolean>(false);
   readonly showTiktokSecret = signal<boolean>(false);
+  readonly showSnapchatSecret = signal<boolean>(false);
 
   readonly lookerStatus = signal<'ready' | 'connected'>('ready');
   readonly lookerTestStatus = signal<'untested' | 'connected' | 'error'>('untested');
@@ -580,11 +651,13 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
   metaConfig: ProviderConfigDto = this.createDefault('meta');
   googleConfig: ProviderConfigDto = this.createDefault('google');
   tiktokConfig: ProviderConfigDto = this.createDefault('tiktok');
+  snapchatConfig: ProviderConfigDto = this.createDefault('snapchat');
 
   metaSecretInput = '';
   googleSecretInput = '';
   googleTokenInput = '';
   tiktokSecretInput = '';
+  snapchatSecretInput = '';
 
   ngOnInit(): void {
     this.fetchConfigs();
@@ -598,6 +671,7 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
             if (item.provider === 'meta') this.metaConfig = item;
             if (item.provider === 'google') this.googleConfig = item;
             if (item.provider === 'tiktok') this.tiktokConfig = item;
+            if (item.provider === 'snapchat') this.snapchatConfig = item;
           }
         }
       },
@@ -613,7 +687,7 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
     return !!this.activeOperations()[`test_${provider}`];
   }
 
-  saveConfig(provider: 'meta' | 'google' | 'tiktok'): void {
+  saveConfig(provider: 'meta' | 'google' | 'tiktok' | 'snapchat'): void {
     const payload: Record<string, any> = {};
     const key = `save_${provider}`;
     this.setOp(key, true);
@@ -628,6 +702,9 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
     } else if (provider === 'tiktok') {
       payload['app_id'] = this.tiktokConfig.app_id;
       if (this.tiktokSecretInput) payload['app_secret'] = this.tiktokSecretInput;
+    } else if (provider === 'snapchat') {
+      payload['app_id'] = this.snapchatConfig.app_id;
+      if (this.snapchatSecretInput) payload['app_secret'] = this.snapchatSecretInput;
     }
 
     this.http.put<{ success: boolean; message: string; data: ProviderConfigDto }>(`/api/v1/admin/developer-configs/${provider}`, payload).subscribe({
@@ -644,6 +721,9 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
         } else if (provider === 'tiktok') {
           this.tiktokConfig = res.data;
           this.tiktokSecretInput = '';
+        } else if (provider === 'snapchat') {
+          this.snapchatConfig = res.data;
+          this.snapchatSecretInput = '';
         }
       },
       error: (err) => {
@@ -653,7 +733,7 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
     });
   }
 
-  testConfig(provider: 'meta' | 'google' | 'tiktok'): void {
+  testConfig(provider: 'meta' | 'google' | 'tiktok' | 'snapchat'): void {
     const key = `test_${provider}`;
     this.setOp(key, true);
 
@@ -717,7 +797,7 @@ export class DeveloperSettingsFeatureComponent implements OnInit {
     setTimeout(() => this.feedbackMessage.set(null), 5000);
   }
 
-  private createDefault(provider: 'meta' | 'google' | 'tiktok'): ProviderConfigDto {
+  private createDefault(provider: 'meta' | 'google' | 'tiktok' | 'snapchat'): ProviderConfigDto {
     return {
       provider,
       app_id: '',

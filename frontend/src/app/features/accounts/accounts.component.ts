@@ -1,16 +1,20 @@
+import { parseOAuthCallback, OAUTH_PROVIDER_KEY } from './oauth-callback';
+import { PROVIDER_GUIDES, ProviderGuide } from './provider-guides';
 import { Component, inject, OnInit, signal, OnDestroy } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { CommonModule, NgTemplateOutlet } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { ButtonComponent } from '../../shared/components/button/button.component';
 import { BadgeComponent } from '../../shared/components/badge/badge.component';
 import { EmptyStateComponent } from '../../shared/components/empty-state/empty-state.component';
 import { ModalComponent } from '../../shared/components/modal/modal.component';
+import { classifySync, SYNC_PILL, SyncKind } from './sync-outcome';
+import { DataCoverageComponent } from './data-coverage.component';
 import { IconComponent } from '../../shared/components/icon/icon.component';
 
 export interface ConnectedAccountDto {
   id: number;
   uuid: string;
-  provider: 'meta' | 'google' | 'tiktok';
+  provider: 'meta' | 'google' | 'tiktok' | 'snapchat';
   external_account_id: string;
   account_name: string;
   currency: string;
@@ -33,15 +37,32 @@ export interface SyncRunDto {
 @Component({
   selector: 'app-accounts-feature',
   standalone: true,
-  imports: [CommonModule, ButtonComponent, BadgeComponent, EmptyStateComponent, ModalComponent, IconComponent],
+  imports: [CommonModule, NgTemplateOutlet, ButtonComponent, BadgeComponent, EmptyStateComponent, ModalComponent, IconComponent, DataCoverageComponent],
   template: `
     <div class="accounts-page">
       <div class="page-header">
         <div>
           <h2 class="title">Connected Advertising Accounts</h2>
-          <p class="subtitle">Direct, official API integrations with authorized advertising accounts across all major networks.</p>
+          <p class="subtitle">Connect your advertising accounts here. Meta, Google and TikTok connection code exists and has not been run against live accounts. Snapchat is added with reporting at account level only, also not run live.</p>
         </div>
       </div>
+
+
+      <ng-template #guideTpl let-id>
+        @if (guides[id]; as g) {
+          <details class="setup-guide" [attr.data-guide]="g.id">
+            <summary>How to connect {{ g.id === 'tiktok' ? 'TikTok' : (g.id | titlecase) }} (official steps)</summary>
+            <p class="guide-state">{{ g.built ? 'Connection code exists in this platform (not yet run against a live provider).' : 'Not built in this platform yet. This only prepares your account.' }}</p>
+            <p><a [href]="g.portalUrl" target="_blank" rel="noopener noreferrer">Open: {{ g.portalLabel }}</a></p>
+            <ol>@for (st of g.steps; track st) { <li>{{ st }}</li> }</ol>
+            <strong>You need</strong>
+            <ul>@for (n of g.needs; track n) { <li>{{ n }}</li> }</ul>
+            <strong>Limits</strong>
+            <ul>@for (l of g.limits; track l) { <li>{{ l }}</li> }</ul>
+            <div class="guide-links">@for (d of g.docs; track d.url) { <a [href]="d.url" target="_blank" rel="noopener noreferrer">{{ d.label }}</a> }</div>
+          </details>
+        }
+      </ng-template>
 
       <!-- Provider Connect Cards -->
       <div class="providers-grid">
@@ -68,6 +89,7 @@ export interface SyncRunDto {
               <span>Connect Meta Account</span>
             </app-button>
           </div>
+          <ng-container [ngTemplateOutlet]="guideTpl" [ngTemplateOutletContext]="{ $implicit: 'meta' }"></ng-container>
         </div>
 
         <!-- Google Ads -->
@@ -93,6 +115,7 @@ export interface SyncRunDto {
               <span>Connect Google Account</span>
             </app-button>
           </div>
+          <ng-container [ngTemplateOutlet]="guideTpl" [ngTemplateOutletContext]="{ $implicit: 'google' }"></ng-container>
         </div>
 
         <!-- TikTok Ads -->
@@ -118,8 +141,30 @@ export interface SyncRunDto {
               <span>Connect TikTok Account</span>
             </app-button>
           </div>
+          <ng-container [ngTemplateOutlet]="guideTpl" [ngTemplateOutletContext]="{ $implicit: 'tiktok' }"></ng-container>
+        </div>
+
+        <!-- Snapchat Ads -->
+        <div class="provider-card">
+          <div class="provider-header">
+            <div class="provider-badge-icon"><app-icon name="snapchat" [size]="22"></app-icon></div>
+            <div>
+              <span class="provider-name">Snapchat Ads</span>
+              <span class="provider-type">Snap Marketing API</span>
+            </div>
+          </div>
+          <p class="provider-desc">Connect Snap ad accounts through the official Snap Marketing API. Daily account-level spend, swipes and purchase value (Snap Pixel only).</p>
+          <div class="card-footer">
+            <app-button variant="primary" size="sm" [loading]="connectingProvider() === 'snapchat'" (clicked)="initiateConnect('snapchat')">
+              <app-icon name="plus" [size]="14"></app-icon>
+              <span>Connect Snapchat Account</span>
+            </app-button>
+          </div>
+          <ng-container [ngTemplateOutlet]="guideTpl" [ngTemplateOutletContext]="{ $implicit: 'snapchat' }"></ng-container>
         </div>
       </div>
+
+      <app-data-coverage></app-data-coverage>
 
       <!-- Connected Accounts List -->
       <div class="section-container">
@@ -136,6 +181,8 @@ export interface SyncRunDto {
             <span class="spinner"></span>
             <span>Loading connected accounts...</span>
           </div>
+        } @else if (loadError()) {
+          <div class="loading-state">Could not load connected accounts. Press Refresh to retry.</div>
         } @else if (accounts().length > 0) {
           <div class="table-card">
             <table class="accounts-table">
@@ -210,6 +257,21 @@ export interface SyncRunDto {
       </div>
 
       <!-- Dynamic Live Data Ingestion Counter Modal -->
+      @if (discovered(); as d) {
+        <section class="discovered" aria-label="Accounts found">
+          <h3>Accounts found on {{ d.provider }}</h3>
+          @if (!d.accounts.length) { <p>No ad accounts were returned for this authorization.</p> }
+          @for (a of d.accounts; track a.external_account_id) {
+            <label style="display:block;margin:6px 0">
+              <input type="checkbox" [checked]="selectedIds().includes(a.external_account_id)" (change)="toggleSelected(a.external_account_id)" />
+              {{ a.account_name }} ({{ a.external_account_id }}){{ a.currency ? ' - ' + a.currency : '' }}
+            </label>
+          }
+          <app-button variant="primary" [loading]="isConnecting()" (clicked)="connectSelected()">Connect selected</app-button>
+        </section>
+      }
+      <p class="x-note" style="font-size:13px;opacity:.8">X (Twitter) Ads is not supported yet: no adapter exists and it needs approved X Ads API access. It is not connected and no X data is shown.</p>
+
       <app-modal 
         [isOpen]="isSyncModalOpen()" 
         title="Live Data Ingestion & Synchronization Engine"
@@ -221,37 +283,28 @@ export interface SyncRunDto {
               {{ currentSyncAccount()?.provider | uppercase }}
             </span>
             <span class="sync-account-title">{{ currentSyncAccount()?.account_name }}</span>
-            <span class="sync-status-pill" [class.completed]="syncProgress() === 100">
-              {{ syncProgress() === 100 ? 'SYNC COMPLETE' : 'INGESTING DATA...' }}
+            <span class="sync-status-pill" [class.completed]="syncKind() === 'completed'">
+              {{ syncPill() }}
             </span>
           </div>
 
           <!-- Live Animated Metric Counter Display -->
           <div class="sync-counter-panel">
             <div class="counter-box">
-              <span class="counter-label">RECORDS INGESTED</span>
-              <span class="counter-value">{{ liveRecordsCount() }}</span>
-              <span class="counter-sub">Campaigns, Ad Sets, & Metrics</span>
+              <span class="counter-label">RECORDS PROCESSED</span>
+              <span class="counter-value">{{ syncKind() === 'completed' ? liveRecordsCount() : '-' }}</span>
+              <span class="counter-sub">{{ syncKind() === 'completed' ? 'Reported by the server' : 'Shown only after a completed run' }}</span>
             </div>
             <div class="counter-box">
               <span class="counter-label">ELAPSED TIME</span>
               <span class="counter-value">{{ syncElapsedTime() }}s</span>
-              <span class="counter-sub">Real-Time Ingestion Window</span>
+              <span class="counter-sub">Time waiting for the server</span>
             </div>
           </div>
 
-          <!-- Dynamic Progress Bar -->
           <div class="progress-section">
             <div class="progress-labels">
               <span class="stage-text">{{ currentSyncStage() }}</span>
-              <span class="percent-text">{{ syncProgress() }}%</span>
-            </div>
-            <div class="progress-track">
-              <div 
-                class="progress-fill" 
-                [style.width.%]="syncProgress()"
-                [class.done]="syncProgress() === 100"
-              ></div>
             </div>
           </div>
 
@@ -270,10 +323,10 @@ export interface SyncRunDto {
           <app-button 
             variant="outline" 
             size="sm" 
-            [disabled]="syncProgress() < 100 && isSyncing()"
+            [disabled]="isSyncing()"
             (clicked)="closeSyncModal()"
           >
-            {{ syncProgress() === 100 ? 'Done & Close' : 'Running in Background...' }}
+            {{ isSyncing() ? 'Waiting for the server...' : 'Close' }}
           </app-button>
         </div>
       </app-modal>
@@ -389,6 +442,13 @@ export interface SyncRunDto {
       font-size: 1.1rem;
     }
 
+    .setup-guide { margin-top: 0.75rem; font-size: 0.8125rem; color: var(--text-muted, #64748b); }
+    .setup-guide summary { cursor: pointer; font-weight: 600; color: var(--text-main); }
+    .setup-guide ol, .setup-guide ul { margin: 0.375rem 0 0.5rem 1.125rem; padding: 0; }
+    .setup-guide li { margin-bottom: 0.25rem; }
+    .setup-guide a { color: #6366f1; text-decoration: underline; }
+    .guide-links { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.375rem; }
+    .guide-state { font-style: italic; }
     .meta-bg { background: linear-gradient(135deg, #1877f2, #0062e0); }
     .google-bg { background: linear-gradient(135deg, #ea4335, #fbbc05); }
     .tiktok-bg { background: linear-gradient(135deg, #000000, #25f4ee); }
@@ -502,6 +562,7 @@ export interface SyncRunDto {
     .platform-badge.meta { background-color: rgba(24, 119, 242, 0.15); color: #1877f2; }
     .platform-badge.google { background-color: rgba(234, 67, 53, 0.15); color: #ea4335; }
     .platform-badge.tiktok { background-color: rgba(0, 0, 0, 0.15); color: #00f2fe; }
+    .platform-badge.snapchat { background-color: rgba(255, 252, 0, 0.25); color: #8a7a00; }
 
     .mono-text {
       font-family: var(--font-family-mono);
@@ -724,10 +785,12 @@ export interface SyncRunDto {
   `]
 })
 export class AccountsFeatureComponent implements OnInit, OnDestroy {
+  readonly guides: Record<string, ProviderGuide> = PROVIDER_GUIDES;
   private readonly http = inject(HttpClient);
 
   readonly accounts = signal<ConnectedAccountDto[]>([]);
   readonly isLoading = signal<boolean>(false);
+  readonly loadError = signal<boolean>(false);
   readonly connectingProvider = signal<string | null>(null);
   readonly syncingAccountId = signal<number | null>(null);
 
@@ -738,6 +801,8 @@ export class AccountsFeatureComponent implements OnInit, OnDestroy {
   readonly liveRecordsCount = signal<number>(0);
   readonly syncElapsedTime = signal<string>('0.0');
   readonly syncProgress = signal<number>(0);
+  readonly syncKind = signal<SyncKind | 'running'>('running');
+  readonly syncPill = () => SYNC_PILL[this.syncKind()];
   readonly currentSyncStage = signal<string>('Initiating connection...');
   readonly syncLogs = signal<{ time: string; message: string }[]>([]);
 
@@ -753,27 +818,97 @@ export class AccountsFeatureComponent implements OnInit, OnDestroy {
   readonly isLoadingHistory = signal<boolean>(false);
   readonly syncRuns = signal<SyncRunDto[]>([]);
 
+  // OAuth return handling (code support; needs real provider approval to verify live)
+  readonly discovered = signal<{ provider: string; accounts: { external_account_id: string; account_name: string; currency?: string }[] } | null>(null);
+  readonly selectedIds = signal<string[]>([]);
+  readonly isConnecting = signal<boolean>(false);
+
   ngOnInit(): void {
     this.fetchAccounts();
+    this.handleOAuthReturn();
   }
 
-  fetchAccounts(): void {
-    this.isLoading.set(true);
-    this.http.get<{ success: boolean; data: ConnectedAccountDto[] }>('/api/v1/ad-accounts').subscribe({
+  private handleOAuthReturn(): void {
+    if (typeof window === 'undefined') return;
+    const parsed = parseOAuthCallback(window.location.search, window.localStorage);
+    if (!parsed) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    if ('error' in parsed) {
+      this.showModal('Connection not completed', parsed.error);
+      return;
+    }
+    const redirectUri = window.location.origin + '/accounts';
+    const qs = new URLSearchParams({ code: parsed.code, state: parsed.state, redirect_uri: redirectUri });
+    this.http.get<{ success: boolean; data: { provider: string; accounts: any[] } }>(
+      `/api/v1/integrations/oauth/${parsed.provider}/callback?${qs.toString()}`
+    ).subscribe({
       next: (res) => {
-        this.isLoading.set(false);
-        if (res.success) {
-          this.accounts.set(res.data);
+        window.localStorage.removeItem(OAUTH_PROVIDER_KEY);
+        if (res?.success && res.data?.accounts) {
+          this.discovered.set({ provider: res.data.provider, accounts: res.data.accounts });
+          this.selectedIds.set([]);
+        } else {
+          this.showModal('Connection not completed', 'The server did not return any accounts.');
         }
       },
-      error: () => {
-        this.isLoading.set(false);
+      error: (err) => {
+        window.localStorage.removeItem(OAUTH_PROVIDER_KEY);
+        this.showModal('Connection not completed', err.error?.error?.message || 'The authorization could not be completed.');
       }
     });
   }
 
-  initiateConnect(provider: 'meta' | 'google' | 'tiktok'): void {
+  toggleSelected(id: string): void {
+    const cur = this.selectedIds();
+    this.selectedIds.set(cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
+  }
+
+  connectSelected(): void {
+    const d = this.discovered();
+    if (!d || !this.selectedIds().length) return;
+    this.isConnecting.set(true);
+    this.http.post(`/api/v1/integrations/${d.provider}/connect`, { selected_account_ids: this.selectedIds() }).subscribe({
+      next: () => {
+        this.isConnecting.set(false);
+        this.discovered.set(null);
+        this.fetchAccounts();
+        if (window.opener) { window.opener.postMessage('adplatform-oauth-done', window.location.origin); }
+      },
+      error: (err) => {
+        this.isConnecting.set(false);
+        this.showModal('Connect accounts', err.error?.error?.message || 'Connecting the selected accounts failed.');
+      }
+    });
+  }
+
+  private showModal(title: string, message: string): void {
+    this.modalTitle.set(title);
+    this.modalMessage.set(message);
+    this.isModalOpen.set(true);
+  }
+
+  fetchAccounts(): void {
+    this.isLoading.set(true);
+    this.loadError.set(false);
+    this.http.get<{ success: boolean; data: ConnectedAccountDto[] }>('/api/v1/ad-accounts').subscribe({
+      next: (res) => {
+        this.isLoading.set(false);
+        if (res.success && Array.isArray(res.data)) {
+          this.accounts.set(res.data);
+        } else {
+          this.loadError.set(true);
+        }
+      },
+      error: () => {
+        this.isLoading.set(false);
+        this.loadError.set(true);
+      }
+    });
+  }
+
+  initiateConnect(provider: 'meta' | 'google' | 'tiktok' | 'snapchat'): void {
     this.connectingProvider.set(provider);
+    window.localStorage.setItem(OAUTH_PROVIDER_KEY, provider);
     const redirectUri = window.location.origin + '/accounts';
 
     this.http.get<{ success: boolean; data: { auth_url: string } }>(
@@ -800,72 +935,38 @@ export class AccountsFeatureComponent implements OnInit, OnDestroy {
     this.syncingAccountId.set(account.id);
     this.isSyncModalOpen.set(true);
     this.isSyncing.set(true);
+    this.syncKind.set('running');
     this.liveRecordsCount.set(0);
-    this.syncProgress.set(10);
-    this.currentSyncStage.set('Connecting to official API endpoint...');
-    this.syncLogs.set([
-      { time: this.nowTime(), message: `Handshake established with ${account.provider.toUpperCase()} Marketing API.` }
-    ]);
+    this.syncProgress.set(0);
+    this.currentSyncStage.set('Waiting for the server to answer. Nothing is shown until it does.');
+    this.syncLogs.set([{ time: this.nowTime(), message: `Sync requested for ${account.provider.toUpperCase()} account ${account.account_name}.` }]);
 
     this.syncTimerStart = Date.now();
     clearInterval(this.syncInterval);
-
-    // Live dynamic counter loop
+    // Only the elapsed time is live. No record counts or stages are simulated.
     this.syncInterval = setInterval(() => {
-      const elapsed = ((Date.now() - this.syncTimerStart) / 1000).toFixed(1);
-      this.syncElapsedTime.set(elapsed);
+      this.syncElapsedTime.set(((Date.now() - this.syncTimerStart) / 1000).toFixed(1));
+    }, 200);
 
-      // Dynamically simulate and increment records count and stages while waiting
-      if (this.syncProgress() < 90) {
-        this.liveRecordsCount.update(c => c + Math.floor(Math.random() * 8) + 3);
+    const finish = (kind: SyncKind, message: string, records: number | null) => {
+      clearInterval(this.syncInterval);
+      this.syncKind.set(kind);
+      if (records !== null) this.liveRecordsCount.set(records);
+      this.currentSyncStage.set(message);
+      this.addLog(message);
+      this.isSyncing.set(false);
+      this.syncingAccountId.set(null);
+      this.fetchAccounts();
+    };
 
-        const currentProg = this.syncProgress();
-        if (currentProg < 35) {
-          this.syncProgress.update(p => p + 5);
-          if (currentProg === 25) {
-            this.currentSyncStage.set('Pulling active Campaigns and Ad Groups...');
-            this.addLog('Ingesting Campaign structures & targeting parameters...');
-          }
-        } else if (currentProg < 65) {
-          this.syncProgress.update(p => p + 4);
-          if (currentProg === 45) {
-            this.currentSyncStage.set('Ingesting Daily Performance Metrics & Insights...');
-            this.addLog('Syncing impressions, spend, clicks, and conversions...');
-          }
-        } else if (currentProg < 88) {
-          this.syncProgress.update(p => p + 3);
-          if (currentProg === 75) {
-            this.currentSyncStage.set('Harmonizing Multi-Currency & Calculating ROAS...');
-            this.addLog('Cross-referencing historical exchange rates...');
-          }
-        }
-      }
-    }, 150);
-
-    // Trigger backend API
-    this.http.post<{ message: string; sync_run?: any }>(`/api/v1/ad-accounts/${account.id}/sync`, {
-      sync_type: 'manual',
-      sync_now: true,
-    }).subscribe({
+    this.http.post<any>(`/api/v1/ad-accounts/${account.id}/sync`, { sync_type: 'manual', sync_now: true }, { observe: 'response' }).subscribe({
       next: (res) => {
-        clearInterval(this.syncInterval);
-        const finalRecords = res.sync_run?.records_processed || Math.max(this.liveRecordsCount(), 48);
-        this.liveRecordsCount.set(finalRecords);
-        this.syncProgress.set(100);
-        this.currentSyncStage.set('✓ Ingestion Complete & Metrics Aggregated!');
-        this.addLog(`Complete! ${finalRecords} records persisted to PostgreSQL.`);
-        this.isSyncing.set(false);
-        this.syncingAccountId.set(null);
-        this.fetchAccounts();
+        const o = classifySync(res.status, res.body);
+        finish(o.kind, o.message, o.records);
       },
       error: (err) => {
-        clearInterval(this.syncInterval);
-        this.isSyncing.set(false);
-        this.syncingAccountId.set(null);
-        this.currentSyncStage.set('⚠️ Sync Completed with Notification');
-        this.addLog(`Notice: ${err.error?.message || 'Sync cycle queued successfully.'}`);
-        this.syncProgress.set(100);
-        this.fetchAccounts();
+        const msg = err?.error?.error?.message || err?.error?.message || 'The sync request failed.';
+        finish('failed', `Failed: ${msg}`, null);
       }
     });
   }

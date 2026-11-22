@@ -27,8 +27,9 @@ class TenancyIsolationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
 
-        $this->seed(RoleAndPermissionSeeder::class);
+        (new RoleAndPermissionSeeder())->run(); // direct run: avoids artisan in php-wasm
 
         // User A (Analyst / Regular tenant user)
         $this->userA = User::create([
@@ -283,5 +284,20 @@ class TenancyIsolationTest extends TestCase
         $responseStatus = $this->actingAs($this->userB, 'sanctum')
             ->getJson("/api/v1/ad-accounts/{$unassignedAccount->id}/sync-status");
         $responseStatus->assertStatus(403);
+    }
+
+    public function test_owner_role_does_not_cross_the_tenant_boundary_on_account_endpoints(): void
+    {
+        // userA is an Owner of THEIR tenant; the Owner role must not grant access to userB's account.
+        $this->assertTrue($this->userA->hasRole('Owner'));
+        $id = $this->accountB->id;
+
+        $this->actingAs($this->userA, 'sanctum')->deleteJson("/api/v1/ad-accounts/{$id}")->assertStatus(403);
+        $this->actingAs($this->userA, 'sanctum')->postJson("/api/v1/ad-accounts/{$id}/sync")->assertStatus(403);
+        $this->actingAs($this->userA, 'sanctum')->getJson("/api/v1/ad-accounts/{$id}/sync-status")->assertStatus(403);
+        $this->actingAs($this->userA, 'sanctum')->getJson("/api/v1/ad-accounts/{$id}/sync-history")->assertStatus(403);
+        $this->actingAs($this->userA, 'sanctum')->getJson("/api/v1/analytics/campaigns/{$this->campaignB->id}")->assertStatus(403);
+
+        $this->assertNotNull(ConnectedAdAccount::find($id));
     }
 }

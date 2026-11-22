@@ -20,7 +20,7 @@ export interface OverviewSummary {
 }
 
 export interface PlatformItem {
-  provider: 'meta' | 'google' | 'tiktok';
+  provider: 'meta' | 'google' | 'tiktok' | 'snapchat';
   spend: number;
   impressions: number;
   clicks: number;
@@ -85,6 +85,14 @@ export interface TimelineItem {
             >
               <app-icon name="tiktok" [size]="15"></app-icon>
               <span>TikTok</span>
+            </button>
+            <button 
+              type="button" 
+              class="filter-btn" 
+              [class.active]="selectedPlatform() === 'snapchat'"
+              (click)="setPlatform('snapchat')"
+            >
+              <span>Snapchat</span>
             </button>
           </div>
 

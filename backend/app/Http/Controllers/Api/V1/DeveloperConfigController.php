@@ -10,7 +10,7 @@ use Illuminate\Http\Request;
 
 class DeveloperConfigController extends Controller
 {
-    protected array $supportedProviders = ['meta', 'google', 'tiktok'];
+    protected array $supportedProviders = ['meta', 'google', 'tiktok', 'snapchat'];
 
     /**
      * List all developer configurations with masked secrets.

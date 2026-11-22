@@ -12,7 +12,7 @@ export interface CampaignListItem {
   id: number;
   external_campaign_id: string;
   name: string;
-  provider: 'meta' | 'google' | 'tiktok';
+  provider: 'meta' | 'google' | 'tiktok' | 'snapchat';
   status: string;
   objective: string | null;
   daily_budget: number | null;
@@ -41,7 +41,7 @@ export interface CampaignListItem {
       <div class="page-header">
         <div>
           <h2 class="title">Campaigns</h2>
-          <p class="subtitle">Multi-platform advertising campaigns across Meta, Google, and TikTok Ads.</p>
+          <p class="subtitle">Multi-platform advertising campaigns across Meta, Google, TikTok and Snapchat Ads.</p>
         </div>
       </div>
 

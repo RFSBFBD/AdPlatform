@@ -189,11 +189,33 @@ class AiController extends Controller
     public function analyzePerformance(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'metrics' => ['required', 'array'],
+            'metrics' => ['sometimes', 'array'],
         ]);
 
+        // Numbers come from the user's own synced data (computed in code), never from the client or the model.
+        $metrics = $this->metricsForUser($request->user()->id);
+        if (empty($metrics)) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'INSUFFICIENT_DATA',
+                    'message' => 'No synced performance data in the last 30 days. Connect an ad account and sync before requesting an analysis.',
+                ],
+            ], 422);
+        }
+
+        if (count(array_unique(array_column($metrics, 'currency'))) > 1) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'MIXED_CURRENCY',
+                    'message' => 'Your connected accounts report in more than one currency. No combined analysis is produced and nothing is converted; filter to a single currency first.',
+                ],
+            ], 422);
+        }
+
         try {
-            $output = $this->aiManager->analyzePerformance($request->user(), $validated['metrics']);
+            $output = $this->aiManager->analyzePerformance($request->user(), $metrics);
 
             return response()->json([
                 'success' => true,
@@ -213,5 +235,36 @@ class AiController extends Controller
                 ],
             ], 400);
         }
+    }
+
+    /**
+     * Exact per-provider totals for the last 30 days, scoped to the authenticated user.
+     */
+    private function metricsForUser(int $userId): array
+    {
+        $accountIds = \App\Models\ConnectedAdAccount::where('user_id', $userId)->pluck('id');
+        if ($accountIds->isEmpty()) {
+            return [];
+        }
+
+        // Grouped per provider AND currency: amounts in different currencies are never summed.
+        return \App\Models\PerformanceMetric::whereIn('connected_ad_account_id', $accountIds)
+            ->where('date', '>=', now()->subDays(30)->toDateString())
+            ->selectRaw('provider, currency, SUM(spend) as spend, SUM(impressions) as impressions, SUM(clicks) as clicks, SUM(conversions) as conversions, SUM(conversion_value) as conversion_value')
+            ->groupBy('provider', 'currency')
+            ->get()
+            ->filter(fn($r) => (float) $r->spend > 0 || (int) $r->impressions > 0)
+            ->map(fn($r) => [
+                'name' => $r->provider,
+                'currency' => $r->currency,
+                'spend' => round((float) $r->spend, 2),
+                'impressions' => (int) $r->impressions,
+                'clicks' => (int) $r->clicks,
+                'conversions' => (float) $r->conversions,
+                'roas' => (float) $r->spend > 0 ? round((float) $r->conversion_value / (float) $r->spend, 2) : null,
+                'ctr' => (int) $r->impressions > 0 ? round(100 * (int) $r->clicks / (int) $r->impressions, 2) : null,
+            ])
+            ->values()
+            ->all();
     }
 }
