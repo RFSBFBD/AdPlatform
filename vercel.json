@@ -3,13 +3,15 @@
   "services": {
     "frontend": {
       "root": "frontend/",
+      "framework": "angular",
       "rewrites": [
         { "source": "/((?!api/|.*\\..*).*)", "destination": "/" }
       ]
     },
     "backend": {
       "root": "backend/",
-      "entrypoint": "Dockerfile.vercel"
+      "runtime": "container",
+      "entrypoint": "Dockerfile"
     }
   },
   "rewrites": [
