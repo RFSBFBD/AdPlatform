@@ -96,17 +96,19 @@ class SnapchatAdapterTest extends TestCase
             ['start_time' => '2026-11-11T00:00:00.000-08:00', 'end_time' => '2026-11-12T00:00:00.000-08:00', 'stats' => ['impressions' => 5, 'swipes' => 0, 'spend' => 1000000]],
         ]))]);
         $r = (new SnapchatAdsAdapter($this->cfg()))->fetchInsights($this->account(), '2026-11-10', '2026-11-11');
-        $this->assertCount(2, $r['metrics']);
-        $this->assertSame('2026-11-10', $r['metrics'][0]['date']);
-        $this->assertEqualsWithDelta(12.5, $r['metrics'][0]['spend'], 1e-9);
-        $this->assertEqualsWithDelta(90.25, $r['metrics'][0]['conversion_value'], 1e-9);
-        $this->assertSame(3.0, $r['metrics'][0]['conversions']);
-        $this->assertSame(0.0, $r['metrics'][1]['conversion_value'], 'no pixel value means 0 reported, never invented');
+        $this->assertSame([], $r['metrics']);
+        $this->assertSame('unsupported_source_scope', $r['canonical_import_status']);
+        $this->assertCount(2, $r['spend_inspection']);
+        $this->assertSame('2026-11-10', $r['spend_inspection'][0]['date']);
+        $this->assertEqualsWithDelta(12.5, $r['spend_inspection'][0]['spend'], 1e-9);
+        $this->assertArrayNotHasKey('conversions', $r['spend_inspection'][0]);
+        $this->assertArrayNotHasKey('impressions', $r['spend_inspection'][0]);
         Http::assertSent(function ($r) {
             return $r['granularity'] === 'DAY'
                 && $r['start_time'] === '2026-11-10T00:00:00.000-08:00'
                 && $r['end_time'] === '2026-11-12T00:00:00.000-08:00'
-                && $r['swipe_up_attribution_window'] === '28_DAY' && $r['view_attribution_window'] === '1_DAY';
+                && $r['fields'] === 'spend' && $r['omit_empty'] === 'false'
+                && !isset($r['swipe_up_attribution_window']) && !isset($r['action_report_time']);
         });
     }
 

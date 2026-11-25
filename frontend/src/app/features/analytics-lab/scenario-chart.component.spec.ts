@@ -1,0 +1,6 @@
+import {TestBed} from '@angular/core/testing';
+import {ScenarioChartComponent} from './scenario-chart.component';
+describe('Scenario chart comparability',()=>{
+ it('uses modeled responses separately from spend and flags infeasible baseline',()=>{const f=TestBed.createComponent(ScenarioChartComponent);f.componentRef.setInput('result',{status:'ok',currency:'USD',response_metric:'conversions',actual_response:99999,scenario_total_spend:100,scenario_response:400,comparison:{no_change:{total_spend:200,modeled_response:600,feasible_under_requested_constraints:false,constraint_violations:['budget_cap']},same_scenario_spend_baseline:{total_spend:100,modeled_response:300,feasible_under_requested_constraints:true,constraint_violations:[]},custom:{status:'invalid_scope'}}});f.detectChanges();expect(f.componentInstance.rows().length).toBe(3);expect(f.componentInstance.max()).toBe(600);expect(f.nativeElement.querySelector('rect').getAttribute('fill')).toBe('#b45309');expect(f.nativeElement.textContent).toContain('budget_cap');expect(f.nativeElement.textContent).not.toContain('99,999');expect(f.nativeElement.textContent).toContain('Unequal spend');});
+ it('has no invented comparison if data absent',()=>{const f=TestBed.createComponent(ScenarioChartComponent);f.detectChanges();expect(f.nativeElement.querySelector('svg')).toBeNull();});
+});

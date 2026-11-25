@@ -1,0 +1,29 @@
+{
+    "success": true,
+    "data": {
+        "status": "evidence_constrained_answer",
+        "snapshot_id": "SNAPSHOT",
+        "question": "كم الإنفاق؟",
+        "claims": [
+            {
+                "type": "value",
+                "pointers": [
+                    "/actual/totals/spend"
+                ],
+                "evidence_type": "ACTUAL",
+                "tag_ar": "فعلي",
+                "a": {
+                    "label": "actual / totals / spend",
+                    "value": "1.000001"
+                },
+                "text": "actual / totals / spend: 1.000001 [ACTUAL]",
+                "text_ar": "actual / totals / spend: 1.000001 [فعلي]"
+            }
+        ],
+        "external_ai_called": true,
+        "relevance_verified": false,
+        "validated_answer": false,
+        "limits": "The AI model only picked which frozen evidence to show. Text and numbers are written by the server from that evidence. Relevance of the pick to your question is NOT verified, and neither is the source data, causation, calibration or any permission to change campaigns or spend.",
+        "limits_ar": "نموذج الذكاء الاصطناعي اختار فقط أي أدلة محفوظة تُعرض. النص والأرقام يكتبها الخادم من هذه الأدلة. لم يُتحقق من مناسبة الاختيار لسؤالك، ولا من صحة بيانات المصدر، ولا من السببية، ولا يوجد إذن بتغيير الحملات أو الإنفاق."
+    }
+}

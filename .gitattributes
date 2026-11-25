@@ -1,0 +1,9 @@
+# Internal continuation notes are not product source deliverables.
+STATUS-NEXT-RUN.md export-ignore
+.gitattributes export-ignore
+
+# Local authoring aids are not application runtime source.
+.agents/ export-ignore
+skills-lock.json export-ignore
+*.sh text eol=lf
+*.json text eol=lf

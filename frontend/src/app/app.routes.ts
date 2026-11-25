@@ -22,6 +22,7 @@ export const routes: Routes = [
         path: 'dashboard',
         loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardFeatureComponent)
       },
+      {path:'analytics-lab',loadComponent:()=>import('./features/analytics-lab/analytics-lab.component').then(m=>m.AnalyticsLabComponent)},
       {
         path: 'accounts',
         loadComponent: () => import('./features/accounts/accounts.component').then(m => m.AccountsFeatureComponent)

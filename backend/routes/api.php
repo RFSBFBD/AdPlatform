@@ -75,13 +75,32 @@ Route::prefix('v1')->group(function () {
 
         // Official Advertising Integrations & Connected Accounts
         Route::prefix('integrations')->group(function () {
+            Route::post('/{provider}/credential-discovery', [\App\Http\Controllers\Api\V1\IntegrationController::class, 'discoverCredentialAccounts']);
             Route::get('/oauth/{provider}/redirect', [\App\Http\Controllers\Api\V1\IntegrationController::class, 'getRedirectUrl']);
             Route::get('/oauth/{provider}/callback', [\App\Http\Controllers\Api\V1\IntegrationController::class, 'handleCallback']);
             Route::post('/{provider}/connect', [\App\Http\Controllers\Api\V1\IntegrationController::class, 'connectAccounts']);
         });
 
         Route::prefix('ad-accounts')->group(function () {
+            Route::get('/{id}/canonical-audiences', [\App\Http\Controllers\Api\V1\CanonicalAudienceController::class,'index']);
+            Route::get('/{id}/audience-targeting-observations', [\App\Http\Controllers\Api\V1\CanonicalAudienceController::class,'observations']);
+            Route::get('/{id}/canonical-creatives', [\App\Http\Controllers\Api\V1\CanonicalCreativeController::class,'index']);
+            Route::get('/{id}/canonical-creatives/{creative}/observations', [\App\Http\Controllers\Api\V1\CanonicalCreativeController::class,'observations']);
+            Route::get('/{id}/canonical-integrity', [\App\Http\Controllers\Api\V1\CanonicalIntegrityController::class,'show']);
+            Route::post('/{id}/conversion-definitions/{definition}/events/{event}/journey', [\App\Http\Controllers\Api\V1\FirstPartyJourneyController::class,'store']);
+            Route::post('/{id}/conversion-definitions/{definition}/stored-attribution', [\App\Http\Controllers\Api\V1\FirstPartyJourneyController::class,'attribute']);
+            Route::get('/{id}/conversion-definitions/{definition}/events', [\App\Http\Controllers\Api\V1\FirstPartyEventController::class,'index']);
+            Route::post('/{id}/conversion-definitions/{definition}/events', [\App\Http\Controllers\Api\V1\FirstPartyEventController::class,'store']);
+            Route::get('/{id}/conversion-definitions', [\App\Http\Controllers\Api\V1\ConversionSourceController::class,'index']);
+            Route::post('/{id}/conversion-definitions', [\App\Http\Controllers\Api\V1\ConversionSourceController::class,'store']);
+            Route::post('/{id}/conversion-definitions/{definition}/daily-import', [\App\Http\Controllers\Api\V1\ConversionSourceController::class,'import']);
             Route::get('/', [\App\Http\Controllers\Api\V1\IntegrationController::class, 'listAccounts']);
+            Route::post('/{id}/amazon-reports', [\App\Http\Controllers\Api\V1\AmazonReportController::class, 'submit']);
+            Route::get('/{id}/amazon-reports/{job}', [\App\Http\Controllers\Api\V1\AmazonReportController::class, 'status']);
+            Route::post('/{id}/microsoft-reports', [\App\Http\Controllers\Api\V1\MicrosoftReportController::class, 'submit']);
+            Route::get('/{id}/microsoft-reports/{job}', [\App\Http\Controllers\Api\V1\MicrosoftReportController::class, 'status']);
+            Route::get('/{id}/x-delivery-report', [\App\Http\Controllers\Api\V1\IntegrationController::class, 'xDeliveryReport']);
+            Route::get('/{id}/apple-delivery-report', [\App\Http\Controllers\Api\V1\IntegrationController::class, 'appleDeliveryReport']);
             Route::delete('/{id}', [\App\Http\Controllers\Api\V1\IntegrationController::class, 'disconnectAccount']);
 
             // Synchronization endpoints
@@ -92,12 +111,41 @@ Route::prefix('v1')->group(function () {
 
         // Analytics & Reporting Endpoints
         Route::prefix('analytics')->group(function () {
+            Route::get('/decision-evidence', [\App\Http\Controllers\Api\V1\DecisionEvidenceController::class,'index']);
+            Route::post('/decision-evidence', [\App\Http\Controllers\Api\V1\DecisionEvidenceController::class,'preview']);
+            Route::get('/decision-evidence/{id}', [\App\Http\Controllers\Api\V1\DecisionEvidenceController::class,'show'])->whereNumber('id');
+            Route::get('/decision-evidence/{id}/question', [\App\Http\Controllers\Api\V1\DecisionEvidenceController::class,'question'])->whereNumber('id');
+            Route::post('/decision-evidence/{id}/assist', [\App\Http\Controllers\Api\V1\DecisionEvidenceController::class,'assist'])->whereNumber('id');
+            Route::post('/decision-evidence/{id}/custom-scenario', [\App\Http\Controllers\Api\V1\DecisionEvidenceController::class,'custom'])->whereNumber('id');
+            Route::post('/decision-evidence/{id}/replay', [\App\Http\Controllers\Api\V1\DecisionEvidenceController::class,'replay'])->whereNumber('id');
+            Route::post('/entity-optimization', [\App\Http\Controllers\Api\V1\EntityOptimizationController::class, 'run']);
+            Route::get('/optimization-runs', [\App\Http\Controllers\Api\V1\OptimizationRunController::class, 'index']);
+            Route::post('/optimization-runs/{id}/custom-leads', [\App\Http\Controllers\Api\V1\OptimizationRunController::class, 'customLead']);
+            Route::post('/optimization-runs/{id}/compare', [\App\Http\Controllers\Api\V1\OptimizationRunController::class, 'compare']);
+            Route::get('/optimization-runs/{id}/report', [\App\Http\Controllers\Api\V1\OptimizationRunController::class, 'report']);
+            Route::get('/optimization-runs/{id}', [\App\Http\Controllers\Api\V1\OptimizationRunController::class, 'show']);
+            Route::post('/optimization-runs/{id}/explain', [\App\Http\Controllers\Api\V1\OptimizationRunController::class, 'explain']);
+            Route::post('/optimization-runs/{id}/replay', [\App\Http\Controllers\Api\V1\OptimizationRunController::class, 'replay']);
+            Route::post('/attribution', [\App\Http\Controllers\Api\V1\AnalyticsDeepController::class, 'attribution']);
             Route::get('/overview', [\App\Http\Controllers\Api\V1\AnalyticsController::class, 'overview']);
             Route::get('/data-coverage', [\App\Http\Controllers\Api\V1\AnalyticsController::class, 'dataCoverage']);
             Route::get('/suggestions', [\App\Http\Controllers\Api\V1\AnalyticsController::class, 'suggestions']);
             Route::get('/campaigns', [\App\Http\Controllers\Api\V1\AnalyticsController::class, 'campaigns']);
             Route::get('/campaigns/{id}', [\App\Http\Controllers\Api\V1\AnalyticsController::class, 'campaignDetails']);
             Route::get('/operations-research', [\App\Http\Controllers\Api\V1\AnalyticsController::class, 'operationsResearch']);
+            Route::get('/audience-matrix', [\App\Http\Controllers\Api\V1\AudienceMatrixController::class, 'show']);
+            Route::get('/platform-comparison', [\App\Http\Controllers\Api\V1\PlatformComparisonController::class, 'show']);
+            Route::get('/audience-saturation', [\App\Http\Controllers\Api\V1\AudienceSaturationController::class, 'show']);
+            Route::get('/audience', [\App\Http\Controllers\Api\V1\AnalyticsDeepController::class, 'audience']);
+            Route::get('/data-quality', [\App\Http\Controllers\Api\V1\AnalyticsDeepController::class, 'dataQuality']);
+            Route::get('/campaign-health', [\App\Http\Controllers\Api\V1\CampaignHealthController::class, 'show']);
+            Route::get('/creative-matrix', [\App\Http\Controllers\Api\V1\CreativeMatrixController::class, 'show']);
+            Route::get('/creative-fatigue', [\App\Http\Controllers\Api\V1\CreativeFatigueController::class, 'show']);
+            Route::get('/observed-series', [\App\Http\Controllers\Api\V1\ObservedSeriesController::class, 'show']);
+            Route::get('/kpis', [\App\Http\Controllers\Api\V1\AnalyticsDeepController::class, 'kpis']);
+            Route::get('/forecast', [\App\Http\Controllers\Api\V1\AnalyticsDeepController::class, 'forecast']);
+            Route::get('/anomalies', [\App\Http\Controllers\Api\V1\AnalyticsDeepController::class, 'anomalies']);
+            Route::get('/diagnostics', [\App\Http\Controllers\Api\V1\AnalyticsDeepController::class, 'diagnostics']);
         });
 
         // Business profile (per-user inputs for scenarios; never shared across users)

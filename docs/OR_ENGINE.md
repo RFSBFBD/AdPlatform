@@ -1,3 +1,5 @@
+> Historical assumed-curve reference. This file documents earlier engine iterations and contains superseded UI/testing claims. For current local operation read OPERATING_GUIDE.md, current scope MATH_SPEC_COVERAGE.md, and discrete semantics EXTERNAL_SOLVER.md. Both assumed and fitted routes now exist; this older reference is not the complete current engine contract.
+
 # OR engine: what it does and does not claim
 
 Status: experimental scenario tool. Output is never an operational recommendation.

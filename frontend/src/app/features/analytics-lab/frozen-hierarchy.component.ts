@@ -1,0 +1,10 @@
+import {Component,input} from '@angular/core';import {CommonModule} from '@angular/common';
+@Component({selector:'app-frozen-hierarchy',standalone:true,imports:[CommonModule],template:`<section><h4>Declared budget hierarchy</h4>
+@if(hierarchy()?.snapshot_id===snapshot() && hierarchy()?.status==='declared_tree_compiled_to_atomic_sum_constraints'){
+<p>{{hierarchy().source_verification}}. Evidence {{hierarchy().evidence_id}}. Parent budgets are exact sums of atomic leaf allocations. They are not additional spend or response variables. Do not sum rows from different levels.</p>
+<div class="scroll"><table><thead><tr><th>Declared node</th><th>Parent</th><th>Atomic variable</th><th>Minimum</th><th>Maximum</th></tr></thead><tbody>@for(node of hierarchy().nodes;track node.id){<tr><th>{{node.id}}</th><td>{{node.parent_id ?? 'Root'}}</td><td>{{node.atomic_variable_id ?? 'Derived parent'}}</td><td>{{node.minimum}}</td><td>{{node.maximum}}</td></tr>}</tbody></table></div>
+@for(scenario of hierarchy().scenarios | keyvalue;track scenario.key){<details><summary>{{scenario.key}} checked parent/leaf rollups, exact {{currency()}}</summary><div class="scroll"><table><thead><tr><th>Node</th><th>Derived exact budget</th></tr></thead><tbody>@for(node of row(scenario.value).node_spend_exact | keyvalue;track node.key){<tr><th>{{node.key}}</th><td>{{node.value}}</td></tr>}</tbody></table></div></details>}
+@for(limit of hierarchy().limits;track limit){<p>{{limit}}</p>}
+}@else{<p>Unavailable: {{hierarchy()?.reason || 'matching declared tree evidence required'}}. Group membership alone is not verified provider hierarchy.</p>}
+</section>`,styles:[`:host{display:block;min-width:0}section{margin:18px 0}p{font-size:13px;line-height:1.6;overflow-wrap:anywhere}.scroll{overflow:auto}table{border-collapse:collapse;font-size:12px;width:100%}td,th{padding:9px;border-bottom:1px solid #dce4ef;white-space:nowrap;text-align:left}details{margin:12px 0}summary{cursor:pointer}`]})
+export class FrozenHierarchyComponent{readonly hierarchy=input<any>(null);readonly snapshot=input('');readonly currency=input('');row(v:any):any{return v;}}

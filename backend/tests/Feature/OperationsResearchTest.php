@@ -57,7 +57,7 @@ class OperationsResearchTest extends TestCase
             ->getJson('/api/v1/analytics/operations-research?budget=15000');
 
         $response->assertStatus(200)
-            ->assertJsonPath('data.status', 'constraints_required')
+            ->assertJsonPath('data.status', 'objective_basis_required')
             ->assertJsonPath('data.recommendations', [])
             ->assertJsonStructure([
                 'success',

@@ -383,4 +383,16 @@ class SyncEngineTest extends TestCase
         $this->assertEquals('Responsive Search Ad #1', $ad->name);
         $this->assertEquals($adGroup->id, $ad->ad_set_id);
     }
+
+    public function test_missing_provider_metric_is_not_persisted_as_zero(): void
+    {
+        $adapter=Mockery::mock(AdvertisingProviderInterface::class);
+        $adapter->shouldReceive('fetchCampaigns')->once()->andReturn(['campaigns'=>[],'raw'=>[]]);
+        $adapter->shouldReceive('fetchInsights')->once()->andReturn(['metrics'=>[['date'=>'2026-11-01','spend'=>12,'impressions'=>100,'clicks'=>2,'conversions'=>null,'conversion_value'=>null]],'raw'=>[]]);
+        $manager=Mockery::mock(OAuthManager::class);$manager->shouldReceive('getAdapter')->with('meta')->andReturn($adapter);
+        $r=(new AdDataSyncEngine($manager))->syncAccount($this->account,'manual','2026-11-01','2026-11-01');
+        $this->assertSame('failed',$r->status);
+        $this->assertStringContainsString('missing',$r->error_message);
+        $this->assertSame(0,PerformanceMetric::where('connected_ad_account_id',$this->account->id)->count());
+    }
 }

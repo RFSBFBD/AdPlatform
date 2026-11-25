@@ -43,6 +43,10 @@ import { CommonModule } from '@angular/common';
         </svg>
       }
 
+      @else if (['amazon','microsoft','linkedin','spotify','reddit','pinterest','taboola','apple','outbrain'].includes(name)) {
+        <span aria-hidden="true" style="font-size:13px;font-weight:800;line-height:1">{{ name.slice(0,2).toUpperCase() }}</span>
+      }
+
       @else if (name === 'looker') {
         <svg [attr.width]="size" [attr.height]="size" viewBox="0 0 24 24" fill="none" class="brand-svg">
           <circle cx="6" cy="6" r="3" fill="#4285F4"/>

@@ -1,0 +1,48 @@
+{
+    "status": "evidence_constrained_answer",
+    "snapshot_id": "snap-1",
+    "question": "ما الإنفاق؟",
+    "claims": [
+        {
+            "type": "value",
+            "pointers": [
+                "/actual/totals/spend"
+            ],
+            "evidence_type": "ACTUAL",
+            "tag_ar": "فعلي",
+            "a": {
+                "label": "actual / totals / spend",
+                "value": "1234.50"
+            },
+            "text": "actual / totals / spend: 1234.50 [ACTUAL]",
+            "text_ar": "actual / totals / spend: 1234.50 [فعلي]"
+        },
+        {
+            "type": "compare",
+            "pointers": [
+                "/actual/totals/by_campaign/111/cpa",
+                "/actual/totals/by_campaign/222/cpa"
+            ],
+            "relation": "greater",
+            "evidence_type": "ACTUAL",
+            "tag_ar": "فعلي",
+            "a": {
+                "label": "actual / totals / by_campaign / 111 / cpa",
+                "value": "12.5"
+            },
+            "b": {
+                "label": "actual / totals / by_campaign / 222 / cpa",
+                "value": "9.75"
+            },
+            "relation_en": "is greater than",
+            "relation_ar": "أكبر من",
+            "text": "actual / totals / by_campaign / 111 / cpa (12.5) is greater than actual / totals / by_campaign / 222 / cpa (9.75) [ACTUAL]",
+            "text_ar": "actual / totals / by_campaign / 111 / cpa (12.5) أكبر من actual / totals / by_campaign / 222 / cpa (9.75) [فعلي]"
+        }
+    ],
+    "external_ai_called": false,
+    "relevance_verified": false,
+    "validated_answer": false,
+    "limits": "A fixed script, not an AI model, picked which frozen evidence to show. Text and numbers are written by the server from that evidence. Relevance of the pick to your question is NOT verified, and neither is the source data, causation, calibration or any permission to change campaigns or spend.",
+    "limits_ar": "سكربت ثابت، وليس نموذج ذكاء اصطناعي، اختار فقط أي أدلة محفوظة تُعرض. النص والأرقام يكتبها الخادم من هذه الأدلة. لم يُتحقق من مناسبة الاختيار لسؤالك، ولا من صحة بيانات المصدر، ولا من السببية، ولا يوجد إذن بتغيير الحملات أو الإنفاق."
+}

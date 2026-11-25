@@ -23,7 +23,46 @@ export interface ChannelAllocation {
   marginal_roas_current: number;
   marginal_roas_optimal: number;
   action: 'SCALE_UP' | 'SCALE_DOWN' | 'MAINTAIN';
+  model?: string;
+  model_params?: Record<string, number>;
+  baseline_spend_same_budget?: number;
+  extrapolates_beyond_support?: boolean;
 }
+
+export interface DataQualityCheck { id: string; status: string; deduction: number; detail: string; }
+export interface DataQualityChannel { score: number; level: string; checks: DataQualityCheck[]; rubric_version: string; }
+export interface DataQualityBlock {
+  window: { start: string; end: string; days: number };
+  channels: Record<string, DataQualityChannel>;
+  portfolio: { score: number | null; optimize_allowed: boolean; threshold: number; gate_reason: string | null };
+}
+export interface SensitivityBlock {
+  status: string; perturbation_percent?: number; max_share_shift_pp?: number;
+  stability?: 'stable' | 'moderately_sensitive' | 'highly_sensitive';
+  thresholds_pp?: { stable_below: number; moderate_below: number };
+  label?: string;
+}
+export interface StressChannel { channel: string; spend: number; expected: number; best: number; worst: number; u_source: string; u: number; }
+export interface StressBlock { status: string; channels: StressChannel[]; label: string; }
+export interface StructuredRecommendation {
+  id: string; type: string;
+  entity: { platform: string; campaign_id: number | null };
+  severity: string;
+  observed: { metric: string; value: number };
+  baseline: { metric: string; value: number };
+  scenario?: { metric: string; value: number };
+  comparison_basis?: string;
+  change_vs_actual_percent?: number | null;
+  change_percent: number;
+  model: { name: string; version: string };
+  confidence: number | null;
+  confidence_reason: string | null;
+  stability: string;
+  action: { type: string };
+  title: string; description: string;
+  evidence: Record<string, number>;
+}
+export interface ReproducibilityBlock { run_id: number; engine: string; engine_version: string; input_hash: string; created_at: string; archive_status?:string; snapshot_sha256?:string; }
 
 export interface Recommendation {
   type: string;
@@ -41,6 +80,8 @@ export interface FrontierPoint {
 }
 
 export interface OperationsResearchData {
+  objective_preflight?: { status:string; reason:string; missing_inputs:string[]; limits:string; selection:{objective:string|null;outcome_basis:string|null}; source_limitations:{source_key:string;unverified_dimensions:string[]}[] };
+  descriptive_reported_sources?: { groups: Record<string,{provider:string;currency:string;connected_ad_account_id:number;status:string;reason:string|null;platform_reported_conversions:number|null;platform_reported_conversion_value:number|null}>; note?:string };
   total_budget: number;
   current_total_revenue: number;
   current_blended_roas: number;
@@ -55,12 +96,23 @@ export interface OperationsResearchData {
   frontier_curve: FrontierPoint[];
   sensitivity_points: Record<string, { channel: string; display_name: string; curve: any[] }>;
   mathematical_model: string;
-  status?: 'ok' | 'insufficient_data' | 'infeasible' | 'constraints_required' | 'no_allocation' | 'mixed_currency' | 'currency_mismatch' | 'exceeds_user_cap';
+  status?: 'ok' | 'insufficient_data' | 'insufficient_data_quality' | 'infeasible' | 'constraints_required' | 'no_allocation' | 'mixed_currency' | 'currency_mismatch' | 'exceeds_user_cap';
   status_message?: string | null;
   warnings?: string[];
   comparison?: { observed_spend: number; observed_revenue_on_curve: number; reference_spend: number; baseline_revenue_same_spend: number; baseline_roas_same_spend: number; reallocation_gain: number; spend_change_vs_observed: number; revenue_change_vs_observed: number; definition: string };
   solver_certificate?: { budget_residual: number; budget_tolerance: number; stationarity_residual: number; stationarity_tolerance: number; within_bounds: boolean; scope: string };
   data_sources?: string[];
+  gates?: string[];
+  run_id?: number;
+  reproducibility?: ReproducibilityBlock;
+  data_quality?: DataQualityBlock;
+  sensitivity?: SensitivityBlock;
+  stress?: StressBlock;
+  robust_scenario?: any;
+  target_scenario?: any;
+  response_curve_charts?: any[];
+  structured_recommendations?: StructuredRecommendation[];
+  custom_scenario?: {status:string; reason?:string; spend?:number; modeled_conversion_value?:number; modeled_roas?:number|null; note?:string; channels?:{channel:string;spend:number;modeled_conversion_value:number;extrapolates_beyond_support:boolean}[]};
 }
 
 @Component({
@@ -74,10 +126,10 @@ export interface OperationsResearchData {
         <div>
           <div class="header-badge-row">
             <h2 class="title">Operations Research Budget Optimizer</h2>
-            <span class="math-badge">Deterministic solver on an assumed response curve (estimate)</span>
+            <span class="math-badge">{{ curveMode() === 'fitted' ? 'Deterministic solver on curves fitted to your data (observational scenario)' : 'Deterministic solver on an assumed response curve (estimate)' }}</span>
           </div>
           <p class="subtitle">
-Suggests how to split one budget across your channels (Meta, Google, TikTok, Snapchat) using a deterministic solver on an assumed response curve you set. The result is an estimate from your data and that assumption, not a forecast, and it never changes your campaigns.
+Compares budget splits using an explicit assumed curve or a curve fitted to your observed daily history. Fitted period scenarios assume equal daily spend. These scenarios are not causal forecasts, and nothing changes your campaigns.
           </p>
         </div>
 
@@ -96,9 +148,50 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
             </select>
           </div>
           <div class="bc-field">
-            <label class="budget-label" for="or_sat" title="Explicit assumption: revenue ceiling as a multiple of observed revenue. Not defaulted.">Saturation multiplier (assumption)</label>
+            <label class="budget-label" for="or_objective">Scenario objective</label>
+            <select id="or_objective" class="budget-input" [ngModel]="objective()" (ngModelChange)="objective.set($event)">
+              <option [ngValue]="null">Select objective...</option>
+              <option value="MAXIMIZE_REPORTED_VALUE">Maximize reported conversion value</option>
+              <option value="MAXIMIZE_REVENUE">Maximize business revenue (source unavailable)</option>
+              <option value="MAXIMIZE_CONVERSIONS">Maximize business conversions (unsupported)</option>
+            </select>
+            <small>Reported value is attribution credit, not profit or proven sales. Unsupported objectives return a reason, not a substitute.</small>
+          </div>
+          <div class="bc-field">
+            <label class="budget-label" for="or_basis">Outcome basis</label>
+            <select id="or_basis" class="budget-input" [ngModel]="outcomeBasis()" (ngModelChange)="outcomeBasis.set($event)">
+              <option [ngValue]="null">Select outcome basis...</option>
+              <option value="platform_reported_credit">Platform-reported credit, not unique outcomes</option>
+              <option value="common_business_events">Common business events (source unavailable)</option>
+            </select>
+            <small>Selection records intent only. It does not verify source equivalence or enable cross-provider optimization.</small>
+          </div>
+          <div class="bc-field">
+            <label class="budget-label" for="or_custom">Optional custom allocation (JSON)</label>
+            <input id="or_custom" class="budget-input" [ngModel]="customAllocationText()" (ngModelChange)="customAllocationText.set($event)" placeholder='Allocation JSON' />
+            <small>Example: <code>{{ '{"meta":1000,"google":2000}' }}</code><br />Include every modeled channel. Uses your selected budget period. Zero simulates pause only if bounds permit.</small>
+          </div>
+          <div class="bc-field">
+            <label class="budget-label" for="or_target">Optional 30-day reported value target</label>
+            <input id="or_target" type="number" min="0" class="budget-input" [ngModel]="targetValue()" (ngModelChange)="targetValue.set($event)" />
+            <small>Separate minimum-spend scenario within your budget cap, not a revenue promise.</small>
+          </div>
+          <div class="bc-field">
+            <label class="budget-label" for="or_robust">Optional robust scale bounds (JSON)</label>
+            <input id="or_robust" class="budget-input" [ngModel]="robustBoundsText()" (ngModelChange)="robustBoundsText.set($event)" placeholder='Scale bounds JSON' />
+            <small>Example: <code>{{ '{"meta":0.2,"google":0.1}' }}</code><br />Fractional error per channel, 0 to below 1. Independent scale boxes are your assumptions, not probabilities.</small>
+          </div>
+          <div class="bc-field">
+            <label class="budget-label" for="or_curve" title="assumed: you state the response shape via the saturation multiplier. fitted: the shape is estimated from your own spend/revenue history (observational, not causal proof).">Response curve</label>
+            <select id="or_curve" [ngModel]="curveMode()" (ngModelChange)="curveMode.set($event)" class="budget-input">
+              <option value="fitted">fitted from your data</option>
+              <option value="assumed">assumed (you set saturation)</option>
+            </select>
+          </div>
+          <div class="bc-field">
+            <label class="budget-label" for="or_sat" title="Explicit assumption: revenue ceiling as a multiple of observed revenue. Not defaulted. Only used with the assumed curve.">Saturation multiplier (assumption)</label>
             <input id="or_sat" type="number" [ngModel]="saturation()" (ngModelChange)="saturation.set($event)"
-              (keyup.enter)="solveOptimization()" min="1.1" max="20" step="0.1" placeholder="e.g. 3" class="budget-input" />
+              (keyup.enter)="solveOptimization()" min="1.1" max="20" step="0.1" [placeholder]="curveMode() === 'fitted' ? 'not used with fitted' : 'e.g. 3'" [disabled]="curveMode() === 'fitted'" class="budget-input" />
           </div>
           <div class="bc-field">
             <label class="budget-label" for="or_mode" title="exact spends the whole budget; at_most may spend less if the marginal return is below your minimum.">Budget mode</label>
@@ -148,7 +241,7 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
       }
       @if (data() && data()?.status !== 'ok') {
         <div class="or-status" role="status" style="padding:16px;margin:16px 0;border:1px solid #f59e0b;border-radius:8px;background:rgba(245,158,11,.1)">
-          <strong>{{ data()?.status === 'infeasible' ? 'No allocation fits the stated limits' : (data()?.status === 'constraints_required' ? 'Budget and assumption required' : (data()?.status === 'no_allocation' ? 'No allocation: nothing clears your minimum marginal ROAS' : 'No scenario produced')) }}</strong>
+          <strong>{{ data()?.status === 'infeasible' ? 'No allocation fits the stated limits' : (data()?.status === 'constraints_required' ? 'Budget and assumption required' : (data()?.status === 'no_allocation' ? 'No allocation: nothing clears your minimum marginal ROAS' : (data()?.status === 'insufficient_data_quality' ? 'Data quality too low to optimize' : 'No scenario produced'))) }}</strong>
           <p style="margin:6px 0 0">{{ data()?.status_message }}</p>
         </div>
       }
@@ -167,15 +260,70 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
         </div>
       }
 
+      @if (data()?.objective_preflight; as pf) {
+        <section class="or-preflight" style="margin:16px 0;padding:16px;border:1px solid #64748b;border-radius:8px;overflow-wrap:anywhere">
+          <h3>Objective and outcome basis</h3>
+          <p>{{ pf.selection.objective || 'No objective selected' }} / {{ pf.selection.outcome_basis || 'No outcome basis selected' }}</p>
+          <p>{{ pf.reason }}</p>
+          @if (pf.missing_inputs.length) { <p>Missing: {{ pf.missing_inputs.join(', ') }}</p> }
+          @for (source of pf.source_limitations; track source.source_key) { <p>Source {{ source.source_key.slice(0, 8) }} unverified: {{ source.unverified_dimensions.join(', ') }}</p> }
+          <small>{{ pf.limits }}</small>
+        </section>
+      }
+      @if (data()?.descriptive_reported_sources; as sources) {
+        @if ((sources.groups | keyvalue).length) {
+          <section class="or-reported-sources" style="margin:16px 0;padding:16px;border:1px solid #64748b;border-radius:8px;overflow-wrap:anywhere">
+            <h3>Source-reported arithmetic, not an allocation</h3>
+            @for (item of sources.groups | keyvalue; track item.key) {
+              <p>{{ item.value.provider }} / account {{ item.value.connected_ad_account_id }} / {{ item.value.currency }}:
+              @if (item.value.status === 'reported') {
+                {{ item.value.platform_reported_conversions | number:'1.0-4' }} platform-reported conversions;
+                {{ item.value.platform_reported_conversion_value | number:'1.0-4' }} reported conversion value.
+              } @else { Withheld. {{ item.value.reason }} }</p>
+            }
+            <small>{{ sources.note }}</small>
+          </section>
+        }
+      }
+      @if (data()?.data_quality; as dq) {
+        <div class="dq-panel" role="note" aria-label="Data quality" style="padding:12px;margin:12px 0;border-radius:8px;background:rgba(148,163,184,.08);font-size:13px">
+          <strong>Data quality ({{ dq.window.days }}-day window ending {{ dq.window.end }})</strong>
+          @if (!dq.portfolio.optimize_allowed) {
+            <div class="dq-gate" role="alert" style="margin-top:6px;color:#f87171">
+              Optimization is blocked: {{ dq.portfolio.gate_reason }}
+            </div>
+          }
+          <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">
+            @for (entry of dq.channels | keyvalue; track entry.key) {
+              <div class="dq-channel" [attr.data-channel]="entry.key" style="border:1px solid rgba(148,163,184,.25);border-radius:8px;padding:8px 10px;min-width:180px">
+                <div><strong>{{ entry.key }}</strong>, score {{ entry.value.score }}/100 ({{ entry.value.level }})</div>
+                @for (chk of entry.value.checks; track chk.id) {
+                  @if (chk.status !== 'pass') {
+                    <div style="color:#fbbf24;margin-top:4px">{{ chk.detail }}</div>
+                  }
+                }
+              </div>
+            }
+            <div class="dq-channel" data-channel="portfolio" style="border:1px solid rgba(148,163,184,.25);border-radius:8px;padding:8px 10px;min-width:180px">
+              <div><strong>Portfolio</strong>, {{ dq.portfolio.score === null ? 'no score' : dq.portfolio.score + '/100' }}; optimization threshold {{ dq.portfolio.threshold }}/100</div>
+            </div>
+          </div>
+        </div>
+      }
+
       @if (data()) { <app-suggestions [items]="sugItems()" [snapshotId]="snapshotId()" [query]="suggestQuery()"></app-suggestions> }
 
       <!-- Key KPI Cards -->
       @if (data()?.status === 'ok') {
+        <div class="typing-legend" role="note" style="font-size:12px;color:#94a3b8;margin:8px 0">
+          <span class="type-badge observed" style="border:1px solid #10b981;border-radius:4px;padding:1px 6px;margin-right:6px">OBSERVED</span> measured from your platform data (ACTUAL).
+          <span class="type-badge scenario" style="border:1px solid #6366f1;border-radius:4px;padding:1px 6px;margin:0 6px 0 12px">SCENARIO</span> computed under the stated curve; an estimate, not a forecast. Forecast outputs elsewhere use EXPECTED.
+        </div>
         <div class="kpi-grid">
           <!-- Total Optimal Revenue -->
           <div class="kpi-card highlight">
             <div class="kpi-header">
-              <span class="kpi-label">Scenario Revenue (assumed curve)</span>
+              <span class="kpi-label">Scenario Revenue ({{ curveMode() }} curve)</span>
               <span class="kpi-pill success">{{ data()!.revenue_gain_delta >= 0 ? '+' : '' }}{{ data()!.revenue_gain_percentage }}% vs same-spend mix</span>
             </div>
             <div class="kpi-value">{{ data()!.optimal_total_revenue | number:'1.0-0' }}</div>
@@ -201,11 +349,11 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
           <div class="kpi-card">
             <div class="kpi-header">
               <span class="kpi-label">Equilibrium Threshold (&lambda;*)</span>
-              <span class="kpi-pill">Solver optimum (assumed curve)</span>
+              <span class="kpi-pill">Solver optimum ({{ curveMode() }} curve)</span>
             </div>
             <div class="kpi-value">{{ data()!.equilibrium_lambda | number:'1.3-3' }}x</div>
             <div class="kpi-subtext">
-              Marginal yield equalized across all channels
+              Marginal return equalized for interior channels; bounded channels can differ.
             </div>
           </div>
 
@@ -215,9 +363,9 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
               <span class="kpi-label">Solver result</span>
               <span class="kpi-pill success">Within tolerance</span>
             </div>
-            <div class="kpi-value text-base">Optimal on assumed curve</div>
+            <div class="kpi-value text-base">Optimal on selected curve</div>
             <div class="kpi-subtext">
-              Optimal only for the assumed response curve. Not a forecast of real results.
+              Optimal only for the selected response curve. Not a forecast of real results.
             </div>
           </div>
         </div>
@@ -225,15 +373,16 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
         <!-- Interactive Visual Graphs Stage -->
         <div class="graphs-grid">
           <!-- Graph 1: Convex Efficiency Frontier -->
+          @if (data()!.frontier_curve.length) {
           <div class="graph-card">
             <div class="card-header">
               <div>
                 <h3 class="card-title">Cross-Channel Efficiency Frontier</h3>
-                <p class="card-desc">Convex diminishing returns curve showing revenue vs total capital allocated.</p>
+                <p class="card-desc">Concave diminishing returns curve showing revenue vs total capital allocated.</p>
               </div>
               <div class="legend-row">
                 <span class="legend-item"><span class="dot curve-dot"></span> Optimal Curve</span>
-                <span class="legend-item"><span class="dot current-dot"></span> Current Operating Point</span>
+                <span class="legend-item"><span class="dot current-dot"></span> Selected-budget scenario</span>
               </div>
             </div>
 
@@ -257,6 +406,7 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
                 <text x="40" y="114" fill="#94a3b8" font-size="10" text-anchor="end">{{ (getMaxFrontierRevenue() / 2) | number:'1.0-0' }}</text>
                 <text x="40" y="204" fill="#94a3b8" font-size="10" text-anchor="end">0</text>
 
+                <text x="50" y="225" fill="#64748b" font-size="10">0 budget</text><text x="570" y="225" text-anchor="end" fill="#64748b" font-size="10">{{ getMaxFrontierBudget() | number:'1.0-0' }} budget</text>
                 <!-- Frontier Area & Line -->
                 <path [attr.d]="getFrontierAreaPath()" fill="url(#frontier-fill)"/>
                 <path [attr.d]="getFrontierLinePath()" fill="none" stroke="#6366f1" stroke-width="3" stroke-linecap="round"/>
@@ -276,16 +426,17 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
             </div>
           </div>
 
+          }
           <!-- Graph 2: Current vs Optimal Spend Reallocation -->
           <div class="graph-card">
             <div class="card-header">
               <div>
                 <h3 class="card-title">Optimal Budget Reallocation</h3>
-                <p class="card-desc">Current spend vs scenario allocation (assumed curve) per platform.</p>
+                <p class="card-desc">Current spend vs scenario allocation ({{ curveMode() }} curve) per platform.</p>
               </div>
               <div class="legend-row">
-                <span class="legend-item"><span class="dot current-bar-dot"></span> Current</span>
-                <span class="legend-item"><span class="dot optimal-bar-dot"></span> Optimal</span>
+                <span class="legend-item"><span class="dot current-bar-dot"></span> ACTUAL</span>
+                <span class="legend-item"><span class="dot optimal-bar-dot"></span> SCENARIO</span>
               </div>
             </div>
 
@@ -325,12 +476,13 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
           </div>
         </div>
 
+        @if (data()!.recommendations.length) {
         <!-- Actionable Algorithmic Directives -->
         <div class="directives-section">
           <div class="section-header">
             <div>
               <h3 class="section-title">Algorithmic Decision Directives</h3>
-              <p class="section-subtitle">Scenario steps computed on an assumed curve. Not operational advice.</p>
+              <p class="section-subtitle">Scenario steps computed on the selected curve. Not operational advice.</p>
             </div>
           </div>
 
@@ -350,6 +502,7 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
           </div>
         </div>
 
+        }
         <!-- Channel Detailed Breakdown Table -->
         <div class="table-card">
           <div class="table-header">
@@ -361,11 +514,12 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
                 <th>Advertising Platform</th>
                 <th>Current Spend</th>
                 <th>Optimal Spend</th>
-                <th>Delta ($)</th>
+                <th>Delta (account currency)</th>
+                <th>Response Model</th>
                 <th>Current Marginal ROAS</th>
                 <th>Optimal Marginal ROAS</th>
                 <th>Expected ROAS</th>
-                <th>Status Directive</th>
+                <th style="min-width:160px">Share vs same-budget mix (not actual spend)</th>
               </tr>
             </thead>
             <tbody>
@@ -382,12 +536,18 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
                   <td [class]="row.delta_spend >= 0 ? 'text-success' : 'text-danger'">
                     {{ row.delta_spend >= 0 ? '+' : '' }}{{ row.delta_spend | number:'1.0-0' }} ({{ row.delta_spend_percentage }}%)
                   </td>
+                  <td>
+                    {{ row.model ? row.model : 'assumed' }}
+                    @if (row.extrapolates_beyond_support) {
+                      <span class="lift-pill" style="margin-left:4px" title="The scenario spends outside the observed spend range for this channel; treat with extra caution.">extrapolated</span>
+                    }
+                  </td>
                   <td>{{ row.marginal_roas_current }}x</td>
                   <td class="font-semibold">{{ row.marginal_roas_optimal }}x</td>
                   <td class="font-semibold">{{ row.optimal_roas }}x</td>
                   <td>
-                    <span [class]="'action-pill ' + row.action.toLowerCase()">
-                      {{ row.action }}
+                    <span [class]="'action-pill ' + row.action.toLowerCase()" style="display:inline-block;line-height:1.5;white-space:normal">
+                      {{ row.action === 'SCALE_UP' ? 'Higher share vs same-budget mix' : row.action === 'SCALE_DOWN' ? 'Lower share vs same-budget mix' : 'Near same-budget mix' }}
                     </span>
                   </td>
                 </tr>
@@ -395,6 +555,146 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
             </tbody>
           </table>
         </div>
+
+        @if (data()?.target_scenario; as target) {
+          <section class="table-card target-card" style="padding:20px">
+            <h3>Minimum-spend target scenario</h3>
+            @if (target.status === 'ok') {
+              <p>30-day target reported value {{ target.target_reported_value | number:'1.2-2' }}. Modeled value {{ target.modeled_conversion_value | number:'1.2-2' }} at spend {{ target.total_spend | number:'1.2-2' }}.</p>
+              <p>Certified spend-search gap: {{ target.budget_gap | number:'1.2-6' }}.</p>
+              @for (row of target.channels; track row.channel) {<p>{{ row.channel }}: spend {{ row.spend | number:'1.2-2' }}, modeled value {{ row.modeled_conversion_value | number:'1.2-2' }}.</p>}
+              <p>{{ target.note }}</p>
+            } @else {<p>{{ target.status }}: {{ target.reason }}</p>}
+          </section>
+        }
+        @if (data()?.robust_scenario; as robust) {
+          <div class="table-card robust-card" style="padding:20px;margin:20px 0">
+            <h3>Box-robust budget scenario</h3>
+            @if (robust.status === 'ok') {
+              <p>Nominal reported value: {{ robust.nominal_conversion_value | number:'1.2-2' }}. Joint worst case: {{ robust.worst_case_conversion_value | number:'1.2-2' }}.</p>
+              <div style="overflow-x:auto"><table class="or-table"><thead><tr><th>Channel</th><th>Scenario spend</th><th>Worst-case value</th><th>Scale bound</th></tr></thead><tbody>
+                @for (row of robust.channels; track row.channel) {<tr><td>{{ row.channel }}</td><td>{{ row.spend | number:'1.2-2' }}</td><td>{{ row.worst_case_conversion_value | number:'1.2-2' }}</td><td>{{ row.scale_error_bound | percent }}</td></tr>}
+              </tbody></table></div><p style="margin-top:12px">{{ robust.note }}</p>
+            } @else { <p>{{ robust.status }}: {{ robust.reason }}</p> }
+          </div>
+        }
+
+        @if (data()?.response_curve_charts?.length) {
+          <section class="response-chart-section">
+            <h3>Fitted response and marginal-return curves</h3>
+            <p>SCENARIO under equal daily spend over 30 days. Dashed markers show observed support boundaries when inside the plotted range. Compare the stated support values; outside is extrapolation, not identified lift.</p>
+            <div class="graphs-grid">
+              @for (chart of data()!.response_curve_charts; track chart.channel) {
+                <div class="graph-card">
+                  <h4>{{ chart.channel }} · {{ chart.model }}</h4>
+                  <p>Spend support {{ chart.support_min | number:'1.0-0' }} to {{ chart.support_max | number:'1.0-0' }}.</p>
+                  <svg viewBox="0 0 600 220" style="width:100%;height:220px" role="img" [attr.aria-label]="chart.channel + ' modeled reported value by spend'">
+                    <text x="20" y="15" fill="#64748b" font-size="11">Modeled reported value, maximum {{ responseMax(chart,'modeled_value') | number:'1.0-0' }}</text>
+                    <line x1="50" y1="185" x2="570" y2="185" stroke="#94a3b8" />
+                    <path [attr.d]="responsePath(chart,'modeled_value')" fill="none" stroke="#6366f1" stroke-width="3" />
+                    @if (chart.support_min <= chart.points[20].spend) {<line [attr.x1]="responseSupportX(chart,chart.support_min)" y1="25" [attr.x2]="responseSupportX(chart,chart.support_min)" y2="185" stroke="#f59e0b" stroke-dasharray="4 4" />}
+                    @if (chart.support_max <= chart.points[20].spend) {<line [attr.x1]="responseSupportX(chart,chart.support_max)" y1="25" [attr.x2]="responseSupportX(chart,chart.support_max)" y2="185" stroke="#f59e0b" stroke-dasharray="4 4" />}
+                    <text x="50" y="205" fill="#64748b" font-size="11">0 spend</text><text x="570" y="205" text-anchor="end" fill="#64748b" font-size="11">{{ chart.points[20].spend | number:'1.0-0' }} spend</text>
+                  </svg>
+                  <svg viewBox="0 0 600 220" style="width:100%;height:220px" role="img" [attr.aria-label]="chart.channel + ' marginal return by spend'">
+                    <text x="20" y="15" fill="#64748b" font-size="11">Marginal value / budget unit, maximum {{ responseMax(chart,'marginal_return') | number:'1.2-2' }}</text>
+                    <line x1="50" y1="185" x2="570" y2="185" stroke="#94a3b8" />
+                    <path [attr.d]="responsePath(chart,'marginal_return')" fill="none" stroke="#059669" stroke-width="3" />
+                    <text x="50" y="205" fill="#64748b" font-size="11">0 spend</text><text x="570" y="205" text-anchor="end" fill="#64748b" font-size="11">{{ chart.points[20].spend | number:'1.0-0' }} spend</text>
+                  </svg>
+                </div>
+              }
+            </div>
+          </section>
+        }
+
+        @if(data()?.sensitivity?.status==='partial') {<div class="source-note">Sensitivity incomplete. Stability withheld because some perturbations were infeasible or uncertified. Completed runs do not establish overall stability.</div>}
+        <!-- Deterministic sensitivity (not a probability) -->
+        @if (data()?.sensitivity?.status === 'ok'; as hasSens) {
+          <div class="sens-panel" role="note" style="padding:12px;margin:12px 0;border-radius:8px;background:rgba(148,163,184,.08);font-size:13px">
+            <strong>Stability: {{ data()!.sensitivity!.stability }}</strong>
+            <div>Largest share shift under a +/-{{ data()!.sensitivity!.perturbation_percent }}% curve perturbation: {{ data()!.sensitivity!.max_share_shift_pp }} percentage points (stable below {{ data()!.sensitivity!.thresholds_pp?.stable_below }}, moderate below {{ data()!.sensitivity!.thresholds_pp?.moderate_below }}).</div>
+            <div style="color:#94a3b8;margin-top:4px">{{ data()!.sensitivity!.label }}</div>
+          </div>
+        }
+
+        <!-- Stress ranges (not prediction intervals) -->
+        @if (data()?.stress?.status === 'ok' && data()!.stress!.channels.length) {
+          <div class="table-card stress-card">
+            <div class="table-header">
+              <h4>Stress Range per Channel</h4>
+              <p style="font-size:12px;color:#94a3b8;margin:4px 0 0">{{ data()!.stress!.label }}</p>
+            </div>
+            <table class="or-table">
+              <thead>
+                <tr><th>Channel</th><th>Scenario Spend</th><th>Expected</th><th>Best</th><th>Worst</th><th>Uncertainty Source</th></tr>
+              </thead>
+              <tbody>
+                @for (sc of data()!.stress!.channels; track sc.channel) {
+                  <tr>
+                    <td class="font-semibold">{{ sc.channel }}</td>
+                    <td>{{ sc.spend | number:'1.0-0' }}</td>
+                    <td class="highlight">{{ sc.expected | number:'1.0-0' }}</td>
+                    <td class="text-success">{{ sc.best | number:'1.0-0' }}</td>
+                    <td class="text-danger">{{ sc.worst | number:'1.0-0' }}</td>
+                    <td style="font-size:12px">{{ sc.u_source }} (u = {{ sc.u }})</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
+        <!-- Structured recommendations (spec-shaped) -->
+          @if (data()?.custom_scenario; as cs) {
+            <section class="directives-section">
+              <h3>Custom allocation scenario</h3>
+              @if (cs.status === 'ok') {
+                <p>SCENARIO spend {{ cs.spend | number:'1.0-2' }}, modeled conversion value {{ cs.modeled_conversion_value | number:'1.0-2' }}, modeled ROAS {{ cs.modeled_roas | number:'1.2-2' }}.</p>
+                <p>{{ cs.note }}</p>
+                @for (c of cs.channels; track c.channel) { <p>{{ c.channel }}: spend {{ c.spend | number:'1.0-2' }}, modeled value {{ c.modeled_conversion_value | number:'1.0-2' }} {{ c.extrapolates_beyond_support ? '(outside observed support)' : '' }}</p> }
+              } @else { <p>{{ cs.status }}: {{ cs.reason }}</p> }
+            </section>
+          }
+        @if (data()?.structured_recommendations?.length) {
+          <div class="directives-section struct-recs">
+            <div class="section-header">
+              <div>
+                <h3 class="section-title">Structured Recommendations</h3>
+                <p class="section-subtitle">Scenario-based, simulation only. Confidence is null where no calibrated confidence exists, with the reason stated.</p>
+              </div>
+            </div>
+            <div class="directives-grid">
+              @for (rec of data()!.structured_recommendations; track rec.id) {
+                <div [class]="'directive-card ' + rec.severity.toLowerCase()" [attr.data-rec-id]="rec.id">
+                  <div class="directive-top">
+                    <span class="directive-type">{{ rec.type | titlecase }}</span>
+                    <span class="lift-pill">{{ rec.action.type === 'SIMULATION_ONLY' ? 'Simulation only' : rec.action.type }}</span>
+                  </div>
+                  <h4 class="directive-title">{{ rec.title }}</h4>
+                  <p class="directive-desc">{{ rec.description }}</p>
+                  <p class="directive-desc" style="font-size:12px;color:#94a3b8">
+                    ACTUAL spend {{ rec.observed.value | number:'1.0-2' }}. Same-budget mix baseline {{ rec.baseline.value | number:'1.0-2' }}. Scenario spend {{ rec.scenario?.value | number:'1.0-2' }}; change vs same-budget baseline {{ rec.change_percent }}%. Change vs ACTUAL spend {{ rec.change_vs_actual_percent }}%. Model {{ rec.model.name }} v{{ rec.model.version }}. Stability: {{ rec.stability }}.
+                    @if (rec.confidence === null) {
+                      <span class="conf-reason">Confidence: not available: {{ rec.confidence_reason }}</span>
+                    } @else {
+                      <span>Confidence: {{ rec.confidence }}</span>
+                    }
+                  </p>
+                </div>
+              }
+            </div>
+          </div>
+        }
+
+        <!-- Reproducibility footer -->
+        @if (data()?.reproducibility; as rep) {
+          <div class="repro-footer" role="contentinfo" style="font-size:12px;color:#64748b;margin:16px 0 4px">
+            Run #{{ rep.run_id }} · {{ rep.engine }} v{{ rep.engine_version }} · input hash {{ rep.input_hash | slice:0:12 }}… · {{ rep.created_at | date:'yyyy-MM-dd HH:mm':'UTC' }} UTC. Archive: {{ rep.archive_status || 'not available' }}. Replay requires the same engine version.
+            <app-button variant="outline" size="sm" (clicked)="replayRun(rep.run_id)">Replay archived fitted base</app-button>
+            @if (replayMessage()) {<p>{{ replayMessage() }}</p>}
+          </div>
+        }
       } @else if (isLoading()) {
         <div class="loading-state">
           <div class="spinner"></div>
@@ -453,11 +753,15 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
 
     /* Budget Controller */
     .budget-controller {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: flex-end;
-      gap: 0.75rem;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: start;
+      gap: 1.25rem 1.5rem;
+      width: 100%;
     }
+    .budget-controller small { display:block; font-size:0.78rem; line-height:1.5; color:var(--text-muted); overflow-wrap:anywhere; }
+    .budget-controller app-button, .budget-controller .or-validation { grid-column:1 / -1; }
+    .budget-controller app-button { justify-self:end; }
     .bc-note { flex: 1 1 100%; margin: 0; font-size: 0.78rem; color: var(--text-subtle); }
     .bc-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
     .budget-label {
@@ -467,7 +771,7 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
     }
     .budget-input {
       box-sizing: border-box;
-      width: 11rem;
+      width: 100%;
       max-width: 100%;
       padding: 0.55rem 0.7rem;
       border: 1px solid var(--border-strong);
@@ -479,7 +783,8 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
     }
     .budget-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
     @media (max-width: 640px) {
-      .bc-field, .budget-controller app-button { flex: 1 1 100%; }
+      .budget-controller { grid-template-columns:minmax(0,1fr); gap:1rem; }
+      .budget-controller app-button { justify-self:stretch; }
       .budget-input { width: 100%; }
     }
 
@@ -897,6 +1202,12 @@ Suggests how to split one budget across your channels (Meta, Google, TikTok, Sna
 export class OperationsResearchComponent implements OnInit {
   private readonly http = inject(HttpClient);
 
+  readonly objective = signal<string | null>(null);
+  readonly outcomeBasis = signal<string | null>(null);
+  readonly targetValue=signal<number|null>(null);
+  readonly robustBoundsText = signal<string>('');
+  readonly customAllocationText = signal('');
+  readonly curveMode = signal<'assumed' | 'fitted'>('fitted');
   readonly targetBudget = signal<number | null>(null);
   readonly saturation = signal<number | null>(null);
   readonly horizon = signal<'daily' | 'per_30_days' | null>(null);
@@ -919,8 +1230,19 @@ export class OperationsResearchComponent implements OnInit {
     const e: string[] = [];
     const num = (v: any) => v !== null && v !== undefined && v !== '';
     const b = this.targetBudget();
+    if (this.targetValue()!==null && !(Number(this.targetValue())>0)) e.push('Target reported value must be positive.');
     if (num(b) && !(Number(b) > 0)) e.push('Budget must be greater than 0.');
-    if (num(this.saturation()) && !(Number(this.saturation()) > 1 && Number(this.saturation()) <= 20)) e.push('Saturation multiplier must be above 1 and at most 20.');
+    if (this.robustBoundsText().trim()) {
+      try { const c=JSON.parse(this.robustBoundsText()); if (!c || Array.isArray(c) || typeof c!=='object' || !Object.keys(c).length || Object.values(c).some(v=>typeof v!=='number' || !Number.isFinite(v) || v<0 || v>=1)) e.push('Robust scale bounds must be numeric fractions in [0,1), one for each channel.'); }
+      catch {e.push('Robust scale bounds must be valid JSON.');}
+    }
+    if (this.customAllocationText().trim()) {
+      try {
+        const c=JSON.parse(this.customAllocationText());
+        if (!c || Array.isArray(c) || typeof c!=='object' || !Object.keys(c).length || Object.values(c).some(v=>typeof v!=='number' || !Number.isFinite(v) || v<0)) e.push('Custom allocation must be a JSON object of nonnegative numeric amounts.');
+      } catch { e.push('Custom allocation must be valid JSON.'); }
+    }
+    if (this.curveMode() === 'assumed' && num(this.saturation()) && !(Number(this.saturation()) > 1 && Number(this.saturation()) <= 20)) e.push('Saturation multiplier must be above 1 and at most 20.');
     if (num(this.minRoas()) && this.mode() !== 'at_most') e.push('Min marginal ROAS is used only with budget mode "at most". Clear it or choose at most.');
     if (this.mode() === 'at_most' && !(Number(this.minRoas()) > 0)) e.push('Budget mode "at most" needs a minimum marginal ROAS above 0.');
     if (this.limitsHorizon()) {
@@ -943,7 +1265,26 @@ export class OperationsResearchComponent implements OnInit {
   private readonly solvedSig = signal<string | null>(null);
   readonly data = computed(() => (this.solvedSig() === this.inputSig() ? this.rawData() : null));
   inputSig(): string {
-    return JSON.stringify([this.targetBudget(), this.horizon(), this.saturation(), this.mode(), this.minRoas(), this.limitsHorizon(), this.limits()]);
+    return JSON.stringify([this.objective(),this.outcomeBasis(),this.targetValue(),this.robustBoundsText(),this.customAllocationText(),this.curveMode(), this.targetBudget(), this.horizon(), this.saturation(), this.mode(), this.minRoas(), this.limitsHorizon(), this.limits()]);
+  }
+
+  responseMax(chart:any,key:string): number {
+    const pts=key==='marginal_return' && chart.model==='power'?chart.points.slice(1):chart.points;
+    return Math.max(1,...pts.map((p:any)=>p[key]));
+  }
+  responsePath(chart:any,key:string): string {
+    const pts=chart.points;const maxX=Math.max(1,...pts.map((p:any)=>p.spend));
+    // Power derivative at zero is singular. Plot from first positive spend, never a fabricated finite zero slope.
+    const valid=key==='marginal_return' && chart.model==='power'?pts.slice(1):pts;
+    const maxY=Math.max(1,...valid.map((p:any)=>p[key]));
+    return valid.map((p:any,i:number)=>`${i?'L':'M'}${50+520*p.spend/maxX},${185-150*p[key]/maxY}`).join(' ');
+  }
+  responseSupportX(chart:any,x:number):number {return 50+520*Math.min(x,chart.points[20].spend)/Math.max(1,chart.points[20].spend);}
+
+  readonly replayMessage=signal('');
+  replayRun(id:number): void {
+    this.replayMessage.set('Checking archived fitted curves...');
+    this.http.post<any>(`/api/v1/analytics/optimization-runs/${id}/replay`,{}).subscribe({next:r=>this.replayMessage.set(`Matches archived base result: ${r.data.matches_archived_base_result}. Maximum allocation difference: ${r.data.max_allocation_delta}. ${r.data.note}`),error:e=>this.replayMessage.set(e.error?.message || 'Replay unavailable.')});
   }
 
   ngOnInit(): void {
@@ -952,12 +1293,25 @@ export class OperationsResearchComponent implements OnInit {
 
   solveOptimization(): void {
     if (this.validationErrors().length) { return; }
+    this.replayMessage.set('');
     this.isLoading.set(true);
     this.solvedSig.set(this.inputSig());
     const params = new URLSearchParams();
+    if (this.targetValue()) params.set('target_reported_value',String(this.targetValue()));
     if (this.targetBudget()) params.set('budget', String(this.targetBudget()));
     if (this.horizon()) params.set('budget_horizon', this.horizon()!);
-    if (this.saturation()) params.set('saturation_multiplier', String(this.saturation()));
+    if (this.robustBoundsText().trim()) {
+      try { const bounds=JSON.parse(this.robustBoundsText());for (const [k,v] of Object.entries(bounds)) params.set('robust_bounds['+k+']',String(v)); }
+      catch { this.isLoading.set(false);return; }
+    }
+    params.set('curve_mode', this.curveMode());
+    if (this.objective()) params.set('objective',this.objective()!);
+    if (this.outcomeBasis()) params.set('outcome_basis',this.outcomeBasis()!);
+    if (this.customAllocationText().trim()) {
+      try { const custom=JSON.parse(this.customAllocationText()); for (const [k,v] of Object.entries(custom)) params.set('custom_allocation['+k+']',String(v)); }
+      catch { this.isLoading.set(false); return; }
+    }
+    if (this.curveMode() === 'assumed' && this.saturation()) params.set('saturation_multiplier', String(this.saturation()));
     if (this.mode()) params.set('budget_mode', this.mode()!);
     if (this.mode() === 'at_most' && this.minRoas()) params.set('min_marginal_roas', String(this.minRoas()));
     if (this.limitsHorizon()) {

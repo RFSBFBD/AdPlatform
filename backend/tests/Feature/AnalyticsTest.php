@@ -71,7 +71,7 @@ class AnalyticsTest extends TestCase
         ]);
 
         // Insert metrics
-        PerformanceMetric::create([
+        PerformanceMetric::create(['metadata'=>['outcome_contract'=>['version'=>'source-outcomes-1','provider'=>'meta','count_metric'=>'synthetic-purchase','value_metric'=>'synthetic-purchase-value','attribution_basis'=>'synthetic-only','value_truth'=>'provider_reported_not_verified_sales','cross_source_equivalence'=>false],'normalization_version'=>'strict-operands-1','account_metadata_source'=>'provider-discovery-explicit-1','metric_definition'=>['version'=>'meta-pixel-purchase-1','normalization'=>'strict-meta-operands-1','account_metadata_source'=>'meta-discovery-explicit-1','conversion'=>'offsite_conversion.fb_pixel_purchase','value'=>'offsite_conversion.fb_pixel_purchase']],
             'connected_ad_account_id' => $this->metaAccount->id,
             'campaign_id' => $this->metaCampaign->id,
             'provider' => 'meta',
@@ -88,7 +88,7 @@ class AnalyticsTest extends TestCase
             'cpa' => 5.00,
         ]);
 
-        PerformanceMetric::create([
+        PerformanceMetric::create(['metadata'=>['outcome_contract'=>['version'=>'source-outcomes-1','provider'=>'google','count_metric'=>'synthetic-purchase','value_metric'=>'synthetic-purchase-value','attribution_basis'=>'synthetic-only','value_truth'=>'provider_reported_not_verified_sales','cross_source_equivalence'=>false],'normalization_version'=>'strict-operands-1','account_metadata_source'=>'provider-discovery-explicit-1','metric_definition'=>['version'=>'meta-pixel-purchase-1','normalization'=>'strict-meta-operands-1','account_metadata_source'=>'meta-discovery-explicit-1','conversion'=>'offsite_conversion.fb_pixel_purchase','value'=>'offsite_conversion.fb_pixel_purchase']],
             'connected_ad_account_id' => $this->googleAccount->id,
             'campaign_id' => $this->googleCampaign->id,
             'provider' => 'google',
@@ -117,31 +117,7 @@ class AnalyticsTest extends TestCase
         $response = $this->actingAs($this->user, 'sanctum')
             ->getJson('/api/v1/analytics/overview?start_date=2026-11-01&end_date=2026-11-20');
 
-        $response->assertStatus(200)
-            ->assertJsonStructure([
-                'date_range' => ['start_date', 'end_date'],
-                'summary' => [
-                    'spend', 'impressions', 'clicks', 'conversions', 'conversion_value',
-                    'cpc', 'cpm', 'ctr', 'roas', 'cpa'
-                ],
-                'platforms',
-                'timeline',
-            ]);
-
-        $data = $response->json();
-        // Total Spend: 100 + 200 = 300
-        $this->assertEquals(300.00, $data['summary']['spend']);
-        // Total Clicks: 500 + 400 = 900
-        $this->assertEquals(900, $data['summary']['clicks']);
-        // Total Conversions: 20 + 10 = 30
-        $this->assertEquals(30, $data['summary']['conversions']);
-        // Total Conversion Value: 600 + 400 = 1000
-        $this->assertEquals(1000.00, $data['summary']['conversion_value']);
-        // Blended ROAS: 1000 / 300 = 3.33
-        $this->assertEquals(3.33, $data['summary']['roas']);
-
-        // Verify Platform breakdown has both Meta and Google
-        $this->assertCount(2, $data['platforms']);
+        $response->assertOk()->assertJsonPath('summary.spend',300)->assertJsonPath('summary.clicks',900)->assertJsonPath('summary.conversions',null)->assertJsonPath('summary.roas',null)->assertJsonPath('outcome_semantics.status','outcomes_withheld');
     }
 
     public function test_overview_filters_by_provider(): void

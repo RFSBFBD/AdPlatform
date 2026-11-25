@@ -2,11 +2,11 @@ import { PROVIDER_GUIDES } from './provider-guides';
 
 describe('provider guides', () => {
   const all = Object.values(PROVIDER_GUIDES);
-  it('covers meta, google, tiktok and snapchat', () => {
-    expect(all.map((g) => g.id).sort()).toEqual(['google', 'meta', 'snapchat', 'tiktok']);
+  it('covers core providers and X OAuth1', () => {
+    expect(all.map((g) => g.id).sort()).toEqual(['google', 'meta', 'snapchat', 'tiktok', 'x']);
   });
   it('uses only https links on official hosts', () => {
-    const ok = ['business-api.tiktok.com', 'developers.facebook.com', 'developers.google.com', 'businesshelp.snapchat.com', 'developers.snap.com'];
+    const ok = ['business-api.tiktok.com', 'developers.facebook.com', 'developers.google.com', 'businesshelp.snapchat.com', 'developers.snap.com', 'docs.x.com'];
     for (const g of all) {
       for (const u of [g.portalUrl, ...g.docs.map((d) => d.url)]) {
         const url = new URL(u);

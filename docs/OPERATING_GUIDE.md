@@ -1,36 +1,68 @@
-# AdPlatform operating guide
+# Current correction notice
 
-Status: the OR-centric cleanup of November 2026 is the current version. README.md (Arabic) is the authoritative overview; this guide keeps the operating and OR-contract details. The platform is deployed at https://ad-platform-alpha.vercel.app (frontend + backend on Vercel, Neon Postgres), but no ad account was ever connected, no OAuth flow ran against a real provider, and no real AI model key was used.
+Snapchat analytical support is unavailable. The implemented bare account stats endpoint is spend-inspection only; canonical imports fail without advancing last-success, and old Snap analytical rows/archives are withheld without editing them. See SNAP_ACCOUNT_SOURCE_CORRECTION.md. This supersedes earlier descriptions implying account-level purchase/delivery support or fixed48h conversion finality. Other provider/typed-lead functionality is not expanded or newly certified. Cross-provider portfolios remain blocked.
 
-## Apply
-- Use the full source archive of this version. Backend: `composer install`, copy `.env.example` to `.env`, `php artisan key:generate`, `php artisan migrate`. Frontend: `npm ci`, `ng build`.
-- First owner: set ADMIN_BOOTSTRAP_EMAIL / ADMIN_BOOTSTRAP_PASSWORD in the server env before seeding (the seeder has no built-in password and never overwrites an existing account).
-- Production notes: read docs/DEPLOY_LATER.md.
+# AdPlatform local operating guide
 
-## Run the tests
-- Backend: `php vendor/bin/phpunit` (PostgreSQL per phpunit.xml). Current version: 184 tests / 1867 assertions, all green on native PostgreSQL 16.2 + FrankenPHP 1.14 / PHP 8.6 (independent review, 2026-11-22). Migrations also run on SQLite for local testing.
-- Frontend: `ng test` (56 tests, all green) and `ng build`.
+Status: local implementation in progress, 24 November 2026. Read SOURCE_CHECKPOINT_2026_11_24.md first for the consolidated successful-use guide and current limitations. No deployment or current production-state verification is included in this development work. No live advertising account, provider OAuth approval or paid service was used to verify these changes.
 
-## What the Operations Research (OR) function does
-- Objective: maximise total platform-reported revenue over Meta, Google and TikTok under a total budget, with R_i(S) = alpha_i (1 - exp(-beta_i S)); alpha_i = saturation_multiplier x observed revenue. The curve is an assumption you state, not a fitted or validated model.
-- Budget: explicit amount and explicit period (daily is multiplied by 30). Channel limits need their own explicit period. A profile budget cap needs a valid period. Nothing is defaulted.
-- Window: one common window of 30 complete days for every channel, ending at the oldest still-fresh channel's last synced day (never today). A channel without data on all 30 days is excluded with its reason; it is not scaled unless OR_ALLOW_PARTIAL_WINDOW_SCALING=true.
-- Excluded with a reason (the rest still run): a channel whose currency is unknown, a channel with missing days in the window, a stale channel.
-- Refused with no numbers: bad or non-finite input, mixed currency among usable channels, business currency different from the channels, min above max, an explicit limit on an excluded channel, fewer than two usable channels, an infeasible limit set, budget beyond the solver's numeric range, or a solution that fails its own check.
-- Solver check (`solver_certificate`): budget residual, optimality residual and bounds, each with its tolerance.
-- Comparison: "reallocation gain" = scenario minus your current mix scaled to the same total spend on the same curve (signed). Changes in total spend and revenue versus the observed 30 days are shown separately. Neither is profit or a forecast.
-- Gates (3 days staleness, 5% maintain band) are uncalibrated engineering settings in config/or.php, returned with every response. The min-days setting (14) is not an effective gate, because the 30-complete-day window already requires all 30 days.
+Verification environment and remaining implementation: see CHECKPOINT_VERIFICATION.md. This is an interim delivery, with continuation beyond this package.
 
-## Done
-Honest login (no preview session), AI analysis computed server-side per provider/currency with fake providers only under APP_ENV=testing, OR engine and its tests, business profile (API + screen), accounts screen with OAuth return handling (code only), per-user tenant boundary (no Owner/Admin bypass), OAuth redirect allowlist and user-bound state, deploy-later and engine docs.
+## Start locally
 
-## Open, not done, or unverified
-- X (Twitter): not implemented. Open requirement.
-- OAuth: code and tests only; never run against a real provider; no provider approvals.
-- The Vercel site serves frontend and backend and login works, but no real provider/OAuth/AI connection has ever run; end-to-end behaviour with live providers is unverified.
-- Backend suite passes fully on native PostgreSQL 16.2 (184/1867); the earlier SQLite-only failures were SQLite limitations, confirmed fixed on PG.
-- OR screen has controls for budget, period, saturation, budget mode (exact / at_most), minimum marginal ROAS and per-channel min/max with their own period, with client-side validation. Min marginal ROAS is accepted only with at_most (the screen disables it otherwise, and the backend answers constraints_required instead of ignoring it). at_most requires a floor. If at_most spends nothing the status is no_allocation (no numbers shown). A channel minimum above the budget is reported as "minimum exceeds budget". Changing any input hides the previous result and shows "Inputs changed" until Solve is pressed. The server validates and refuses on its own. Currency comes from the business profile and channels; no currency input and no conversion. Curve variance is not modelled.
-- Very large budgets (about 100x observed spend) get status budget_beyond_numeric_range; a log-domain solver would extend the range (a design change, not done).
-- Whether a missing-day channel should be excluded or extrapolated is a product decision (default: excluded).
-- The response curve is an assumption; solver correctness says nothing about real ad results.
-- Per-user vs Owner/team sharing model is undecided.
+1. Backend: install Composer dependencies, copy backend/.env.example to backend/.env, set a local PostgreSQL connection, generate APP_KEY, and run migrations. Keep credentials outside source control.
+2. First owner: set ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD in the local environment before seeding. No built-in owner password is supplied and existing accounts are not overwritten.
+3. Frontend: run npm ci in frontend/, then npm run build or the development server. Configure its API route/proxy for your local backend.
+4. Optional discrete solver: read EXTERNAL_SOLVER.md, install the pinned packages in an isolated Python environment and set OR_SOLVER_PYTHON to its absolute interpreter. Empty default fails closed, no silent continuous fallback. The native container does not automatically install this runtime.
+5. Backups require PostgreSQL client tools compatible with the server. No backup/client binaries are bundled in source archives.
+
+## Verification
+
+Current local synthetic test checkpoint: 534 backend tests, 4219 assertions; 145 Angular tests and production frontend build. These counts describe this checkpoint, not permanent guarantees or live-integration evidence. Re-run after configuration, dependency, schema or runtime changes:
+
+- backend/: php vendor/phpunit/phpunit/phpunit, using PostgreSQL per phpunit.xml. The backup/restore tests need compatible pg_dump/psql on PATH.
+- frontend/: npm test -- --watch=false, then npm run build.
+- Provider fixtures test bounded request/response contracts, not actual authorization or data availability.
+- Visual checks used synthetic records on desktop and phone layouts. No real customer or campaign data was used.
+
+## Main workflows
+
+### Observed evidence
+
+Evidence & Diagnostics shows actual KPIs/daily series, model-based forecast intervals, anomaly signals and observed funnel diagnostics separately. Completed daily windows use verified account IANA timezones. Unknown/incompatible scope, gaps or operand problems abstain rather than silently substituting data. Audience/creative matrices are entity-scoped proxies, not canonical people/creative identity resolution or calibrated saturation thresholds.
+
+### Platform portfolio OR
+
+The platform portfolio screen requires explicit objective and outcome basis. Its cross-provider allocation path currently abstains; historical assumed/fitted route descriptions are not evidence of a currently supported cross-provider recommendation. Source-account-currency arithmetic is descriptive, not unique customers or verified revenue. Source-scoped entity scenarios below remain separate. Budget/horizon/currency/quality gates remain explicit. Actual historical totals and same-budget modeled baseline are separate. Fitted mode selects among validated monotone concave candidates; observational curves do not identify causal budget lift. See OR_ENGINE.md for historical assumed-route details and MATH_SPEC_COVERAGE.md for current extensions.
+
+### Entity scenarios
+
+Choose campaign, ad-set or ad level, objective and explicit 30-day budget. Every selected entity needs complete comparable history and a valid fit. Value/conversion objectives, typed leads, bounded portfolio ratios and explicit value/CPA/ROAS targets retain distinct semantics. Do not interpret reported conversions as unique customers or reported value as profit.
+
+Continuous entity minima are mandatory. Discrete minima are minimum IF ACTIVE, with pause, explicit step and maximum-active count. Finite-menu optimum is not continuous optimum. Unknown runtime/model contracts or failed certificates return no accepted allocation.
+
+Inspect candidate holdout/penalty evidence, response/support chart, modeled baseline/custom comparison, sensitivity and separate robust scenario. Sensitivity stability is engineering perturbation, stress is fixed-allocation RMSE scaling, and robust bounds are explicit user assumptions. None is allocation-confidence probability.
+
+### Stored scenarios
+
+Load owner-scoped history, then open an archived result. Its original scope/inputs are retained and labeled, not replaced by current form settings. Replays use archived curves/constraints with current installed runtime, not current metrics. Base and robust replay are distinct. Ties and changed solver environments can alter allocation. Archive checksums detect accidental changes, not privileged database tampering; legacy results may be unsealed.
+
+Fixed questions explain stored evidence without an LLM call. The HTML report is a private local download with print styling, not publication or sharing. It is deterministic stored evidence, not an independent audit or current forecast. General free-form AI analyst Q&A remains unfinished.
+
+### First-party sources and attribution
+
+Typed conversion definitions and manual aggregates are explicitly user-declared, not provider-verified. Lead optimization requires a selected owned lead definition and matching entity/day spend population. See TYPED_CONVERSION_SOURCES.md.
+
+Click-journey attribution allocates only explicitly supplied already-deduplicated first-party journeys. Five-rule comparison uses the same population; rule disagreement is not confidence. No identity resolution, event feed or data-driven attribution model is implemented. Never apply the rules to summed provider conversion totals.
+
+## Boundaries and remaining work
+
+- No campaign execution, account setup, spending or deployment is included in these changes.
+- No adapter is verified against a live account. Request/mapping coverage and provider-specific gates differ. See PROVIDER_IMPLEMENTATION_MATRIX.md and PROVIDER_SOURCES.md.
+- Canonical audience/placement identities, all-provider creative mapping/effective history, automatic event feeds/identity/cross-source deduplication, trained data-driven attribution, calibrated saturation threshold intervals, general LP/NLP/QP routing and full AI analyst workflow remain incomplete.
+- Team sharing and private owner archive access are separate. Owner archive features do not grant other users access.
+- Historical documents under docs/archive and older numbered engineering notes are context, not current production-state evidence. Current coverage is in MATH_SPEC_COVERAGE.md and its latest sections.
+
+## Canonical/evidence continuation milestone
+
+See CANONICAL_CREATIVE_IDENTITY.md and CANONICAL_DATA_MILESTONE.md for exact provider-object creative identity/observations, strict metric hierarchy and historical read-only audit. FIRST_PARTY_EVENTS.md documents separate manual event/click evidence with stored rule attribution. These features do not establish source authorization, cross-platform identity, historical creative/day attribution or automatic CRM ingestion. Current clean-source verification and frozen-versus-later package distinction are in CANONICAL_MILESTONE_VERIFICATION.md.

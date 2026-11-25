@@ -153,7 +153,7 @@ class SuggestionNarratorTest extends TestCase
         $meta = ConnectedAdAccount::create(['user_id' => $u->id, 'provider' => 'meta', 'external_account_id' => 'm', 'account_name' => 'M', 'currency' => 'USD', 'timezone' => 'UTC', 'access_token' => 't', 'status' => 'active']);
         $g = ConnectedAdAccount::create(['user_id' => $u->id, 'provider' => 'google', 'external_account_id' => 'g', 'account_name' => 'G', 'currency' => 'USD', 'timezone' => 'UTC', 'access_token' => 't', 'status' => 'active']);
         $metaDay = Carbon::now()->subDays(3)->format('Y-m-d');
-        $mk = fn($a, $p, $d) => PerformanceMetric::create(['connected_ad_account_id' => $a->id, 'provider' => $p, 'date' => $d, 'spend' => 10, 'impressions' => 1, 'clicks' => 1, 'conversions' => 1, 'conversion_value' => 30, 'currency' => 'USD']);
+        $mk = fn($a, $p, $d) => PerformanceMetric::create(['metadata'=>['outcome_contract'=>['version'=>'source-outcomes-1','provider'=>$a->provider,'count_metric'=>'synthetic-purchase','value_metric'=>'synthetic-purchase-value','attribution_basis'=>'synthetic-only','value_truth'=>'provider_reported_not_verified_sales','cross_source_equivalence'=>false],'normalization_version'=>'strict-operands-1','account_metadata_source'=>'provider-discovery-explicit-1','metric_definition'=>['version'=>'meta-pixel-purchase-1','normalization'=>'strict-meta-operands-1','account_metadata_source'=>'meta-discovery-explicit-1','conversion'=>'offsite_conversion.fb_pixel_purchase','value'=>'offsite_conversion.fb_pixel_purchase']],'connected_ad_account_id' => $a->id, 'provider' => $p, 'date' => $d, 'spend' => 10, 'impressions' => 1, 'clicks' => 1, 'conversions' => 1, 'conversion_value' => 30, 'currency' => 'USD']);
         $mk($meta, 'meta', $metaDay);
         $mk($g, 'google', Carbon::now()->subDay()->format('Y-m-d')); // newer than the common OR window end
         $r = $this->actingAs($u, 'sanctum')->getJson('/api/v1/analytics/suggestions');
@@ -162,8 +162,13 @@ class SuggestionNarratorTest extends TestCase
         $this->assertSame($metaDay, $r->json('data.grounding.window.1'));
         $this->assertSame($r->json('data.mode.snapshot_id'), $r->json('data.grounding.snapshot_id'));
         $this->assertSame('ai_not_requested', $r->json('data.mode.reason'));
+        $this->assertCount(6,$r->json('data.analyst_evidence'));
+        $this->assertSame($r->json('data.mode.snapshot_id'),$r->json('data.analyst_evidence.actual_metrics.snapshot_id'));
         // Google's newer day is outside the shared window, exactly as for the OR engine.
         $titles = implode('|', array_column($r->json('data.suggestions'), 'title'));
         $this->assertStringContainsString('No report rows pulled for Google Ads', $titles);
+    }
+    public function test_provider_receives_six_block_evidence_but_cannot_replace_results():void{
+        $this->ai(['priority'=>[0,1],'notes'=>[]]);$e=(new \App\Services\Advertising\AnalystEvidence)->build(['status'=>'ok','total_budget'=>731,'optimal_total_revenue'=>932],'one');$r=app(SuggestionNarrator::class)->narrate($this->user('six-block@example.com'),$this->sug(),true,$e);$this->assertSame('ai_ordered',$r['mode']['result']);Http::assertSent(function($req){$data=$req->data();$prompt=$data['messages'][1]['content']??'';return str_contains($prompt,'actual_metrics')&&str_contains($prompt,'forecast')&&str_contains($prompt,'optimization')&&str_contains($prompt,'diagnostics')&&str_contains($prompt,'confidence')&&str_contains($prompt,'data_quality')&&str_contains($prompt,'932');});
     }
 }

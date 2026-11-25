@@ -14,6 +14,9 @@ class AdvertisingOptimizationService
 {
     private OptimizationStrategyInterface $optimizer;
 
+    /** ChannelParameterDto[] of the most recent optimize call (for downstream scenario/sensitivity tooling). */
+    public array $lastChannelParams = [];
+
     public function __construct(?OptimizationStrategyInterface $optimizer = null)
     {
         $this->optimizer = $optimizer ?? new ConvexMarginalReturnOptimizer();
@@ -24,6 +27,12 @@ class AdvertisingOptimizationService
         'google' => 'Google Ads (Search & Performance Max)',
         'tiktok' => 'TikTok Ads (Spark & In-Feed)',
         'snapchat' => 'Snapchat Ads',
+        'taboola' => 'Taboola Ads',
+        'pinterest' => 'Pinterest Ads',
+        'reddit' => 'Reddit Ads',
+        'spotify' => 'Spotify Ads',
+        'linkedin' => 'LinkedIn Ads',
+        'microsoft' => 'Microsoft Advertising',
     ];
 
     /**
@@ -54,6 +63,10 @@ class AdvertisingOptimizationService
     public function optimizeForUser(int $userId, array $options = []): OptimizationResultDto
     {
         $window = $this->resolveWindow($userId);
+        $this->lastChannelParams=[];
+        if($window){$sourceRows=PerformanceMetric::whereIn('connected_ad_account_id',ConnectedAdAccount::where('user_id',$userId)->select('id'))->whereBetween('date',[$window['start'],$window['end']])->limit(30001)->get(['provider','metadata','connected_ad_account_id']);
+            if($sourceRows->count()>30000)return OptimizationResultDto::abstain('local_limit','Provider definition transition check exceeds the local30000-row cap.',(float)($options['budget']??0));
+            if($problem=(new \App\Services\Analytics\MetaDefinitionTransitionGuard)->problem($sourceRows))return OptimizationResultDto::abstain('incomparable_metric_definitions',$problem,(float)($options['budget']??0));}
         $metrics = $window ? $this->fetchHistoricalMetrics($userId, $window) : [];
         if ($window) {
             $options['window'] = $window;
@@ -62,7 +75,7 @@ class AdvertisingOptimizationService
     }
 
     /**
-     * Snap metrics are final 48h after the end of each day in the AD ACCOUNT timezone
+     * Legacy engineering age cutoff only, NOT source or conversion finality evidence. Snap canonical rows are now independently blocked. Nonconversion metrics have a separate returned watermark; conversion-time metrics require their processing watermark. The older 48h heuristic was based on the AD ACCOUNT timezone
      * (https://developers.snap.com/marketing-api/Ads-API/measurement). Day D ends at 00:00 of D+1 and is final at 00:00 of D+3,
      * so the newest usable day is (today in that timezone) minus 3 days. An account without a valid timezone has no usable day.
      *
@@ -104,7 +117,7 @@ class AdvertisingOptimizationService
      *
      * @return array{start:string,end:string,days:int}|null
      */
-    private function resolveWindow(int $userId): ?array
+    public function resolveWindow(int $userId): ?array
     {
         $accountModels = ConnectedAdAccount::where('user_id', $userId)->get(['id', 'provider', 'timezone']);
         $accounts = $accountModels->pluck('id');
@@ -218,6 +231,7 @@ class AdvertisingOptimizationService
         }
 
         [$params, $excluded, $currencies] = $this->buildChannelParameters($metrics, $multiplier, $options['channel_limits'] ?? [], $budget, $today, $this->gates());
+        $this->lastChannelParams = $params;
         // An explicit limit on a channel that is not in the model cannot be honoured: refuse, never ignore.
         $modelled = array_map(fn(ChannelParameterDto $p) => $p->channel, $params);
         $unmet = array_values(array_diff(array_keys($options['channel_limits'] ?? []), $modelled));
@@ -418,7 +432,7 @@ class AdvertisingOptimizationService
             // Assumed curve R = alpha * (1 - exp(-beta * S)) through the observed point,
             // with alpha = multiplier * observed revenue (explicit user assumption).
             $alpha = $revenue * $multiplier;
-            $beta = -log(1.0 - ($revenue / $alpha)) / $spend;
+            $beta = -log1p(-($revenue / $alpha)) / $spend;
 
             $lim = $limits[$platform] ?? [];
             $min = isset($lim['min']) ? max(0.0, (float) $lim['min']) : 0.0;

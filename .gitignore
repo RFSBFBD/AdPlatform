@@ -33,3 +33,7 @@ redis_data/
 # Backups and Local Assets
 backups/
 brand-assets/
+
+# Local Python runtime artifacts
+__pycache__/
+*.py[cod]

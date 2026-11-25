@@ -3,7 +3,7 @@
  * `built` says whether this codebase has a working adapter (code only, never run against a live provider).
  */
 export interface ProviderGuide {
-  id: 'meta' | 'google' | 'tiktok' | 'snapchat';
+  id: 'meta' | 'google' | 'tiktok' | 'snapchat' | 'x';
   built: boolean;
   portalLabel: string;
   portalUrl: string;
@@ -14,6 +14,13 @@ export interface ProviderGuide {
 }
 
 export const PROVIDER_GUIDES: Record<ProviderGuide['id'], ProviderGuide> = {
+  x: {
+    id:'x',built:true,portalLabel:'X OAuth API reference',portalUrl:'https://docs.x.com/resources/fundamentals/authentication/api-reference.md',
+    docs:[{label:'Ads analytics contract',url:'https://docs.x.com/x-ads-api/analytics.md'}],
+    steps:['Use an Ads API approved application with OAuth1 consumer key and secret, not an OAuth2 client credential.','Register the exact allowed /accounts callback URL in X developer settings and this deployment.','Save consumer credentials in the admin panel, connect as the account owner, then select discovered accounts. The request token/secret is held encrypted for10minutes.'],
+    needs:['Approved Ads API application access','User access to advertising accounts with known timezone and funding currency'],
+    limits:['Only campaign delivery for1-7 completed account-local days on ALL_ON_TWITTER. No purchase revenue import or OAuth2 refresh.','Form token examples conflict with the JSON response table; both parse paths have fixture tests, not live proof.','Null metrics and overlapping segments abstain. Funding currencies are rechecked before reporting.']
+  },
   tiktok: {
     id: 'tiktok',
     built: true,

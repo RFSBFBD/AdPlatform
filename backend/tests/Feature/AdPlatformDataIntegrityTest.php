@@ -102,10 +102,10 @@ class AdPlatformDataIntegrityTest extends TestCase
     public function test_google_ads_discovers_native_currency_and_timezone(): void
     {
         Http::fake([
-            'googleads.googleapis.com/v18/customers:listAccessibleCustomers' => Http::response([
+            'googleads.googleapis.com/v26/customers:listAccessibleCustomers' => Http::response([
                 'resourceNames' => ['customers/9876543210'],
             ], 200),
-            'googleads.googleapis.com/v18/customers/9876543210/googleAds:search' => Http::response([
+            'googleads.googleapis.com/v26/customers/9876543210/googleAds:search' => Http::response([
                 'results' => [
                     [
                         'customer' => [
@@ -135,12 +135,12 @@ class AdPlatformDataIntegrityTest extends TestCase
     {
         Http::fake([
             // Page 1
-            'googleads.googleapis.com/v18/customers/1234567890/googleAds:search' => function ($request) {
+            'googleads.googleapis.com/v26/customers/1234567890/googleAds:search' => function ($request) {
                 $body = json_decode($request->body(), true);
                 $query = $body['query'] ?? '';
 
                 if (str_contains($query, 'FROM ad_group_ad')) {
-                    return Http::response(['results' => [], 'nextPageToken' => null], 200);
+                    return Http::response(['results' => []], 200);
                 }
 
                 if (!isset($body['pageToken'])) {
@@ -158,7 +158,6 @@ class AdPlatformDataIntegrityTest extends TestCase
                         'results' => [
                             ['campaign' => ['id' => 'camp_g_3', 'name' => 'Campaign Page 2 - Item C', 'status' => 'ENABLED']],
                         ],
-                        'nextPageToken' => null, // empty final page token
                     ], 200);
                 }
 
@@ -375,4 +374,18 @@ class AdPlatformDataIntegrityTest extends TestCase
         $this->assertNotNull($adMetric);
         $this->assertEquals(100.0, (float) $adMetric->spend);
     }
+    public function test_meta_reach_frequency_are_optional_scoped_values_not_zero_defaults(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['graph.facebook.com/*/act_*/insights*' => Http::response(['data' => [
+            ['campaign_id' => 'c1', 'date_start' => '2026-11-01', 'spend' => '20', 'impressions' => '1000', 'clicks' => '30', 'reach' => '500', 'frequency' => '2'],
+            ['campaign_id' => 'c1', 'date_start' => '2026-11-02', 'spend' => '10', 'impressions' => '100', 'clicks' => '2'],
+        ]], 200)]);
+        $metrics = (new MetaAdsAdapter())->fetchInsights($this->metaAccount, '2026-11-01', '2026-11-02')['metrics'];
+        $this->assertSame(500, $metrics[0]['reach']);
+        $this->assertSame(2.0, $metrics[0]['frequency']);
+        $this->assertNull($metrics[1]['reach']);
+        $this->assertNull($metrics[1]['frequency']);
+    }
+
 }

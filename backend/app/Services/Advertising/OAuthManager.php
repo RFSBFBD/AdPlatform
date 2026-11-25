@@ -20,6 +20,16 @@ class OAuthManager
             'google' => new GoogleAdsAdapter(),
             'tiktok' => new TikTokAdsAdapter(),
             'snapchat' => new SnapchatAdsAdapter(),
+            'x' => new \App\Services\Advertising\Adapters\XAdsAdapter(),
+            'amazon' => new \App\Services\Advertising\Adapters\AmazonAdsAdapter(),
+            'microsoft' => new \App\Services\Advertising\Adapters\MicrosoftAdsAdapter(),
+            'outbrain' => new \App\Services\Advertising\Adapters\OutbrainAdsAdapter(),
+            'apple' => new \App\Services\Advertising\Adapters\AppleAdsAdapter(),
+            'linkedin' => new \App\Services\Advertising\Adapters\LinkedInAdsAdapter(),
+            'spotify' => new \App\Services\Advertising\Adapters\SpotifyAdsAdapter(),
+            'reddit' => new \App\Services\Advertising\Adapters\RedditAdsAdapter(),
+            'pinterest' => new \App\Services\Advertising\Adapters\PinterestAdsAdapter(),
+            'taboola' => new \App\Services\Advertising\Adapters\TaboolaAdsAdapter(),
             default => throw new InvalidArgumentException("Unsupported advertising provider: '{$provider}'"),
         };
     }

@@ -14,6 +14,7 @@ use App\Models\SyncRun;
 use App\Services\Advertising\OAuthManager;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -76,7 +77,7 @@ class AdDataSyncEngine
             $campaignData = $adapter->fetchCampaigns($account);
             
             // Persist raw audit payload
-            RawProviderPayload::create([
+            $hierarchyPayload = RawProviderPayload::create([
                 'connected_ad_account_id' => $account->id,
                 'provider' => $account->provider,
                 'endpoint' => $campaignData['endpoint'] ?? 'campaigns',
@@ -127,6 +128,10 @@ class AdDataSyncEngine
                             ]
                         );
 
+                        if(isset($adSetData['canonical_audience_references'])){
+                            if(!is_array($adSetData['canonical_audience_references']))throw new \RuntimeException('Audience references must be an explicit object.');
+                            (new CanonicalAudienceRecorder)->record($account,$adSet,$adSetData['canonical_audience_references'],$syncRun,$hierarchyPayload);
+                        }
                         $adSetMap[$adSetData['external_ad_set_id']] = $adSet->id;
 
                         if (!empty($adSetData['ads']) && is_array($adSetData['ads'])) {
@@ -147,6 +152,10 @@ class AdDataSyncEngine
                                     ]
                                 );
 
+                                if(isset($adData['canonical_creative'])){
+                                    if(!is_array($adData['canonical_creative']))throw new \RuntimeException('Creative identity payload must be an explicit object.');
+                                    (new CanonicalCreativeRecorder)->record($account,$ad,$adData['canonical_creative'],$syncRun,$hierarchyPayload);
+                                }
                                 $adMap[$adData['external_ad_id']] = $ad->id;
                             }
                         }
@@ -157,8 +166,20 @@ class AdDataSyncEngine
             // Step 2: Sync Insights / Performance Metrics at accurate entity level
             $insightsData = $adapter->fetchInsights($account, $startDate, $endDate);
 
+            // New observations only. Original numeric tokens survive independently of legacy decimal4 writes.
+            // A capture row is NOT a qualified exact observation or permission to optimize.
+            if(array_key_exists('recorded_response_pages',$insightsData)){
+                if(!is_array($insightsData['recorded_response_pages'])){throw new \RuntimeException('Original reporting pages must be a list.');}
+                (new RecordedReportingCapture)->persist($account,$syncRun,$insightsData['recorded_response_pages']);
+            }
+
+            $recordedDelivery = null;
+            if ($account->provider === 'google' && isset($insightsData['recorded_response_pages'])) {
+                $recordedDelivery = (new RecordedDeliveryRepository)->append($account, $syncRun, $campaignData);
+            }
+
             // Persist raw audit payload for insights
-            RawProviderPayload::create([
+            $insightPayload = RawProviderPayload::create([
                 'connected_ad_account_id' => $account->id,
                 'provider' => $account->provider,
                 'endpoint' => $insightsData['endpoint'] ?? 'insights',
@@ -166,39 +187,47 @@ class AdDataSyncEngine
                 'payload' => $insightsData['raw'] ?? [],
             ]);
 
+            if ($account->provider === 'snapchat' || ($insightsData['canonical_import_status'] ?? null) === 'unsupported_source_scope') {
+                throw new \RuntimeException('Snapchat bare account stats is spend-inspection only; canonical delivery/outcome import is unsupported. No metric rows or success timestamp changed.');
+            }
+
             $processedCount = count($campaignData['campaigns'] ?? []);
 
+            // Validate the complete metric batch before any metric writes. Missing
+            // provider values are unknown, never measured zeros. Keep malformed rows
+            // out of both KPI totals and fitted response curves.
+            if (!$account->currency) { throw new \RuntimeException('Account currency is unknown; no metrics imported.'); }
+            $batchKeys = [];
             foreach ($insightsData['metrics'] ?? [] as $m) {
-                $campaignId = null;
-                $adSetId = null;
-                $adId = null;
+                if(!is_array($m))throw new \RuntimeException('Metric row must be an explicit object.');
+                \App\Services\Advertising\MetricOperand::validate($m);
+                foreach (['spend', 'impressions', 'clicks', 'conversions', 'conversion_value'] as $key) {
+                    if (!array_key_exists($key, $m) || $m[$key] === null || !is_numeric($m[$key]) || !is_finite((float)$m[$key]) || $m[$key] < 0) {
+                        throw new \RuntimeException('Provider metric missing, nonfinite or negative: '.$key.'. No metric batch imported.');
+                    }
+                }
+                $date = $m['date'] ?? '';
+                $parsed = is_string($date) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) ? \DateTimeImmutable::createFromFormat('!Y-m-d', $date) : false;
+                if (!$parsed || $parsed->format('Y-m-d') !== $date || $date < $startDate || $date > $endDate) {
+                    throw new \RuntimeException('Provider metric date is invalid or outside requested range.');
+                }
+                $key = json_encode([$date, $m['external_campaign_id'] ?? null, $m['external_ad_set_id'] ?? null, $m['external_ad_id'] ?? null]);
+                if (isset($batchKeys[$key])) { throw new \RuntimeException('Duplicate provider entity/day in metric batch.'); }
+                $batchKeys[$key] = true;
+            }
 
-                // Resolve Ad level ID if present
-                if (!empty($m['external_ad_id'])) {
-                    $adId = $adMap[$m['external_ad_id']] ?? Ad::where('external_ad_id', $m['external_ad_id'])->value('id');
-                }
+            $resolvedMetrics=[];$canonicalKeys=[];$resolver=new CanonicalMetricEntityResolver;
+            foreach($insightsData['metrics']??[]as$index=>$m){
+                $resolved=$resolver->resolve($account,$m);
+                $key=json_encode([$m['date'],$resolved['campaign_id'],$resolved['ad_set_id'],$resolved['ad_id']]);
+                if(isset($canonicalKeys[$key]))throw new \RuntimeException('Distinct external metric rows resolve to the same canonical entity/day. No metric batch imported.');
+                $canonicalKeys[$key]=true;$resolvedMetrics[$index]=$resolved;
+            }
 
-                // Resolve AdSet level ID if present
-                if (!empty($m['external_ad_set_id'])) {
-                    $adSetId = $adSetMap[$m['external_ad_set_id']] ?? AdSet::where('external_ad_set_id', $m['external_ad_set_id'])->value('id');
-                }
-
-                // Resolve Campaign level ID
-                if (!empty($m['external_campaign_id']) && isset($campaignMap[$m['external_campaign_id']])) {
-                    $campaignId = $campaignMap[$m['external_campaign_id']];
-                } elseif (!empty($m['external_campaign_id'])) {
-                    $campaignId = Campaign::where('connected_ad_account_id', $account->id)
-                        ->where('external_campaign_id', $m['external_campaign_id'])
-                        ->value('id');
-                }
-
-                // Backfill parent relationships if metric came with child IDs only
-                if ($adId && !$adSetId) {
-                    $adSetId = Ad::where('id', $adId)->value('ad_set_id');
-                }
-                if ($adSetId && !$campaignId) {
-                    $campaignId = AdSet::where('id', $adSetId)->value('campaign_id');
-                }
+            DB::transaction(function() use($insightsData,$resolvedMetrics,$account,$syncType,$insightPayload,$syncRun,&$processedCount){
+            foreach ($insightsData['metrics'] ?? [] as $index=>$m) {
+                $resolved=$resolvedMetrics[$index];
+                $campaignId=$resolved['campaign_id'];$adSetId=$resolved['ad_set_id'];$adId=$resolved['ad_id'];
 
                 $spend = (float) ($m['spend'] ?? 0);
                 $impressions = (int) ($m['impressions'] ?? 0);
@@ -226,6 +255,9 @@ class AdDataSyncEngine
                     [
                         'spend' => $spend,
                         'impressions' => $impressions,
+                        // Non-additive estimates at this exact entity/day scope only.
+                        'reach' => $m['reach'] ?? null,
+                        'frequency' => $m['frequency'] ?? null,
                         'clicks' => $clicks,
                         'conversions' => $conversions,
                         'conversion_value' => $conversionValue,
@@ -234,17 +266,29 @@ class AdDataSyncEngine
                         'ctr' => round($ctr, 4),
                         'roas' => round($roas, 4),
                         'cpa' => round($cpa, 4),
-                        'currency' => $account->currency ?? 'USD',
+                        'currency' => $account->currency,
                         'metadata' => [
                             'synced_at' => now()->toIso8601String(),
+                            'outcome_contract'=>\App\Services\Advertising\OutcomeContract::forRow($account,$m),
+                            'normalization_version'=>\App\Services\Advertising\MetricOperand::VERSION,
+                            'account_metadata_source'=>\App\Services\Advertising\AccountMetadataEvidence::marker($account),
                             'sync_type' => $syncType,
-                            'entity_level' => $adId ? 'ad' : ($adSetId ? 'ad_set' : 'campaign'),
+                            'entity_level' => $resolved['entity_level'],
+                            'source_external_entity_ids'=>array_intersect_key($m,array_flip(['external_campaign_id','external_ad_set_id','external_ad_id'])),
+                            'canonical_resolution_version'=>'strict-parent-1',
+                            'sync_run_id'=>$syncRun->id,
+                            'raw_provider_payload_id'=>$insightPayload->id,
+                            'reporting_timezone' => $account->timezone,
+                            'provider_endpoint' => $insightsData['endpoint'] ?? 'insights',
+                            'metric_definition' => $m['metric_definition'] ?? null,
                         ],
                     ]
                 );
 
                 $processedCount++;
             }
+
+            });
 
             // Update account sync timestamp & status
             $account->update([
@@ -259,6 +303,7 @@ class AdDataSyncEngine
                 'metadata' => [
                     'start_date' => $startDate,
                     'end_date' => $endDate,
+                    'recorded_delivery' => $recordedDelivery,
                 ],
             ]);
 

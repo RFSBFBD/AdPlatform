@@ -1,7 +1,7 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { CoverageResponse, PROVIDER_LABEL, STATUS_LABEL, formatTotals, syncLine } from './data-coverage';
+import { CoverageResponse, PROVIDER_LABEL, STATUS_LABEL, formatRecordedTotals, syncLine } from './data-coverage';
 
 @Component({
   selector: 'app-data-coverage',
@@ -10,7 +10,7 @@ import { CoverageResponse, PROVIDER_LABEL, STATUS_LABEL, formatTotals, syncLine 
   template: `
     <div class="section-container cov">
       <div class="cov-head">
-        <h3 class="cov-title">Pulled reports by platform</h3>
+        <h3 class="cov-title">Stored reports by platform</h3>
         <button type="button" class="cov-refresh" (click)="load()">Refresh</button>
       </div>
       @if (state() === 'loading') {
@@ -30,9 +30,10 @@ import { CoverageResponse, PROVIDER_LABEL, STATUS_LABEL, formatTotals, syncLine 
                 <span class="cov-pill" [class.ok]="p.status === 'data_available'">{{ status(p.status) }}</span>
               </div>
               @if (p.status === 'data_available') {
-                <p>{{ p.days_with_data }} days with data ({{ p.first_date }} to {{ p.last_date }})</p>
+                <p>{{ p.days_with_data }} days with stored data ({{ p.first_date }} to {{ p.last_date }})</p>
                 @for (t of totals(p); track t.currency) {
-                  <p>{{ t.currency }}: spend {{ t.spend }}, purchase value {{ t.value }}</p>
+                  <p>{{ t.currency }}: spend {{ t.spend }}, reported outcome value {{ t.value }}</p>
+                  <p class="cov-sub">{{ t.note }}</p>
                 }
               }
               @for (a of p.accounts; track a.id) {
@@ -68,9 +69,9 @@ export class DataCoverageComponent implements OnInit {
   readonly state = signal<'loading' | 'error' | 'loaded'>('loading');
   readonly data = signal<CoverageResponse | null>(null);
 
-  label = (p: any) => PROVIDER_LABEL[p as keyof typeof PROVIDER_LABEL];
+  label = (p: any) => PROVIDER_LABEL[p as keyof typeof PROVIDER_LABEL] || String(p);
   status = (s: any) => STATUS_LABEL[s as keyof typeof STATUS_LABEL];
-  totals = (p: any) => formatTotals(p.totals_by_currency);
+  totals = (p: any) => formatRecordedTotals(p);
   sync = syncLine;
   allEmpty = () => (this.data()?.platforms ?? []).every((p) => p.status === 'not_connected');
 

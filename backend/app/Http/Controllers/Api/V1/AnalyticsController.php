@@ -41,38 +41,52 @@ class AnalyticsController extends Controller
     private function coverageFor(int $userId, string $start, string $end): array
     {
         $accounts = ConnectedAdAccount::where('user_id', $userId)->get();
+        $provenance=(new \App\Services\Advertising\SyncProvenance)->forAccounts($accounts);
         $ids = $accounts->pluck('id');
         $rows = PerformanceMetric::query()
             ->whereIn('connected_ad_account_id', $ids)
             ->whereDate('date', '>=', $start)
             ->whereDate('date', '<=', $end)
-            ->get(['connected_ad_account_id', 'provider', 'date', 'spend', 'impressions', 'clicks', 'conversions', 'conversion_value', 'currency', 'campaign_id']);
+            ->get(['connected_ad_account_id', 'provider', 'date', 'spend', 'impressions', 'clicks', 'conversions', 'conversion_value', 'currency', 'campaign_id', 'ad_set_id', 'ad_id', 'metadata']);
 
         $lastRuns = \App\Models\SyncRun::whereIn('connected_ad_account_id', $ids)
             ->orderByDesc('id')->get()->groupBy('connected_ad_account_id')->map->first();
 
         $out = [];
-        foreach (['meta', 'google', 'tiktok', 'snapchat'] as $provider) {
+        foreach (['meta', 'google', 'tiktok', 'snapchat', 'taboola', 'pinterest', 'reddit', 'spotify', 'linkedin', 'microsoft', 'amazon', 'x', 'apple', 'outbrain', 'walmart'] as $provider) {
             $accs = $accounts->where('provider', $provider);
             $pr = $rows->where('provider', $provider);
             $byCurrency = [];
-            foreach ($pr->groupBy('currency') as $cur => $g) {
+            $recordedByCurrency = [];
+            $scopeProblem = $pr->isEmpty()?null:(new \App\Services\Analytics\MetricScopeGuard)->problem($userId,$start,$end,$provider);
+            foreach ($scopeProblem?[]:$pr->groupBy('currency') as $cur => $g) {
+                $completeSum = fn($key,$integer=false)=>$g->contains(fn($r)=>$r->$key===null)?null:($integer?(int)$g->sum($key):round((float)$g->sum($key),4));
+                $exactTotals=[];
+                $outcomeProblem=(new \App\Services\Analytics\OutcomeSemanticGuard)->problem($g);
+                foreach(['spend','conversion_value','impressions','clicks','conversions']as$key){
+                    $sum=\Brick\Math\BigDecimal::zero();$missing=$outcomeProblem&&in_array($key,['conversion_value','conversions'],true);
+                    foreach($g as$row){$raw=$row->getRawOriginal($key);if($raw===null){$missing=true;continue;}$sum=$sum->plus(\App\Services\Decision\Accounting\ExactValue::of($raw,in_array($key,['impressions','clicks'],true))->decimal());}
+                    $exactTotals[$key]=$missing?null:(string)$sum;
+                }
+                $recordedByCurrency[$cur]=(new \App\Services\Analytics\RecordedDeliveryKpis)->forGroup($userId,$provider,(string)$cur,$start,$end)
+                    ?? \App\Services\Analytics\RecordedKpiArithmetic::fromTotals($exactTotals);
                 $byCurrency[$cur] = [
-                    'spend' => round((float) $g->sum('spend'), 4),
-                    'conversion_value' => round((float) $g->sum('conversion_value'), 4),
-                    'impressions' => (int) $g->sum('impressions'),
-                    'clicks' => (int) $g->sum('clicks'),
-                    'conversions' => round((float) $g->sum('conversions'), 4),
+                    'spend' => $completeSum('spend'),
+                    'conversion_value' => $completeSum('conversion_value'),
+                    'impressions' => $completeSum('impressions',true),
+                    'clicks' => $completeSum('clicks',true),
+                    'conversions' => $completeSum('conversions'),
                 ];
             }
             $status = $accs->isEmpty() ? 'not_connected' : ($pr->isEmpty() ? 'connected_no_data' : 'data_available');
             $out[] = [
                 'provider' => $provider,
                 'status' => $status,
-                'accounts' => $accs->map(function ($a) use ($lastRuns, $pr) {
+                'accounts' => $accs->map(function ($a) use ($lastRuns, $pr, $provenance) {
                     $run = $lastRuns->get($a->id);
                     return [
                         'id' => $a->id,
+                        'sync_provenance'=>$provenance[$a->id],
                         'name' => $a->account_name,
                         'currency' => $a->currency,
                         'timezone' => $a->timezone,
@@ -86,14 +100,18 @@ class AnalyticsController extends Controller
                 'first_date' => $pr->isEmpty() ? null : substr((string) $pr->min('date'), 0, 10),
                 'last_date' => $pr->isEmpty() ? null : substr((string) $pr->max('date'), 0, 10),
                 'totals_by_currency' => $byCurrency,
+                'legacy_totals_precision'=>'rounded_legacy_compatibility_not_exact_source',
+                'recorded_arithmetic_by_currency'=>$recordedByCurrency,
+                'totals_status' => $scopeProblem?'withheld_scope_conflict':'available',
+                'totals_reason' => $scopeProblem,
                 'has_conversion_value' => $pr->where('conversion_value', '>', 0)->isNotEmpty(),
                 'has_campaign_level_rows' => $pr->whereNotNull('campaign_id')->isNotEmpty(),
-                'gaps' => $this->coverageGaps($provider, $status, $pr),
+                'gaps' => array_merge($this->coverageGaps($provider, $status, $pr), $scopeProblem?[$scopeProblem]:[]),
             ];
         }
 
         return ['start_date' => $start, 'end_date' => $end, 'platforms' => $out,
-            'note' => 'Platform-reported figures, not profit. Nothing here is estimated or converted; totals are per currency.'];
+            'note' => 'Platform-reported figures, not profit. Nothing here is estimated or converted; totals are per currency. Any missing metric keeps its total unknown; hierarchy conflicts withhold totals.'];
     }
 
     /**
@@ -102,11 +120,11 @@ class AnalyticsController extends Controller
      */
     public function suggestions(
         Request $request,
-        \App\Services\OperationsResearch\AdvertisingOptimizationService $orService,
+        \App\Services\OperationsResearch\OptimizationOrchestrator $orchestrator,
         \App\Services\Advertising\SuggestionBuilder $builder,
         \App\Services\Advertising\SuggestionNarrator $narrator
     ): JsonResponse {
-        $snap = $this->buildSnapshot($request, $orService, $builder);
+        $snap = $this->buildSnapshot($request, $orchestrator, $builder);
         $ai = $request->boolean('ai');
 
         // The AI step may only act on the exact snapshot the user is looking at.
@@ -121,12 +139,14 @@ class AnalyticsController extends Controller
             ], 409);
         }
 
-        $narrated = $narrator->narrate($request->user(), $snap['suggestions'], $ai);
+        $evidence = (new \App\Services\Advertising\AnalystEvidence)->build($snap['or'], $snap['snapshot_id']);
+        $narrated = $narrator->narrate($request->user(), $snap['suggestions'], $ai, $evidence);
         $narrated['mode']['snapshot_id'] = $snap['snapshot_id'];
 
         return response()->json([
             'success' => true,
             'data' => [
+                'analyst_evidence' => $evidence,
                 'suggestions' => $narrated['suggestions'],
                 'mode' => $narrated['mode'],
                 'grounding' => ['window' => [$snap['coverage']['start_date'], $snap['coverage']['end_date']], 'window_source' => $snap['window_source'], 'or_status' => $snap['or']['status'] ?? null, 'snapshot_id' => $snap['snapshot_id']],
@@ -139,16 +159,20 @@ class AnalyticsController extends Controller
      * One computation: OR result + coverage on the OR's own window + rules. snapshot_id fingerprints all three, so a changed
      * database (a sync arriving) or a different result gives a different id.
      */
-    private function buildSnapshot(Request $request, $orService, $builder): array
+    private function buildSnapshot(Request $request, $orchestrator, $builder): array
     {
-        $or = $this->computeOr($request, $orService);
-        $w = $or['gates']['window'] ?? null;
+        $or = $this->computeOr($request, $orchestrator);
+        $w = $or['gates']['window'] ?? $or['data_quality']['window'] ?? null;
         $windowSource = $w ? 'or_window' : 'default_30_days_no_or_window';
         $start = $w['start'] ?? Carbon::now()->subDays(30)->format('Y-m-d');
         $end = $w['end'] ?? Carbon::now()->format('Y-m-d');
         $coverage = $this->coverageFor($request->user()->id, $start, $end);
         $suggestions = $builder->build($coverage, $or);
-        $id = substr(hash('sha256', json_encode([$or, $coverage, $suggestions])), 0, 16);
+        // Volatile bookkeeping (run id, timestamps) must not churn the snapshot id:
+        // the snapshot fingerprints data + result + suggestions, not the audit row.
+        $orForHash = $or;
+        unset($orForHash['run_id'], $orForHash['reproducibility']);
+        $id = substr(hash('sha256', json_encode([$orForHash, $coverage, $suggestions])), 0, 16);
 
         return ['or' => $or, 'coverage' => $coverage, 'suggestions' => $suggestions, 'snapshot_id' => $id, 'window_source' => $windowSource];
     }
@@ -162,7 +186,7 @@ class AnalyticsController extends Controller
             $gaps[] = 'No purchase value in this period: this platform is left out of the OR model.';
         }
         if ($provider === 'snapchat') {
-            $gaps[] = 'Snapchat is account-level only (no campaign breakdown). Swipes are stored as clicks and are not link clicks. Purchase value only for ads tracked with Snap Pixel. Snapchat days become final 48 hours after the end of the day in the account time zone; newer days are left out of the OR model.';
+            $gaps[] = 'The implemented bare Snapchat ad-account endpoint supports spend inspection only. Canonical stored delivery, clicks and purchase outcomes are unverified and withheld from analytics and OR. A fixed 48-hour age cutoff is not conversion finality evidence; returned processing watermarks are required for any future conversion source.';
         }
         return $gaps;
     }
@@ -175,7 +199,7 @@ class AnalyticsController extends Controller
         $validated = $request->validate([
             'start_date' => ['nullable', 'date_format:Y-m-d'],
             'end_date' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:start_date'],
-            'provider' => ['nullable', 'string', 'in:meta,google,tiktok,snapchat'],
+            'provider' => ['nullable', 'string', 'in:meta,google,tiktok,snapchat,taboola,pinterest,reddit,spotify,linkedin,microsoft,amazon'],
             'account_id' => ['nullable', 'integer'],
             'currency' => ['nullable', 'string', 'size:3'],
             'reporting_currency' => ['nullable', 'string', 'size:3'],
@@ -206,6 +230,7 @@ class AnalyticsController extends Controller
             });
         }
 
+        if($problem=(new \App\Services\Analytics\MetaDefinitionTransitionGuard)->userProblem($request->user()->id,$startDate,$endDate,$validated['provider']??null,$validated['account_id']??null,false,false))return response()->json(['success'=>false,'message'=>$problem],409);
         // 1. Currency Breakdown (DATA-001)
         $currencyBreakdown = (clone $query)
             ->join('connected_ad_accounts', 'performance_metrics.connected_ad_account_id', '=', 'connected_ad_accounts.id')
@@ -230,6 +255,8 @@ class AnalyticsController extends Controller
             ->select([
                 'performance_metrics.date',
                 'performance_metrics.provider',
+                'performance_metrics.metadata',
+                'performance_metrics.connected_ad_account_id',
                 'performance_metrics.spend',
                 'performance_metrics.impressions',
                 'performance_metrics.clicks',
@@ -239,13 +266,16 @@ class AnalyticsController extends Controller
             ])
             ->get();
 
+        $nativeEvidence=(new \App\Services\Analytics\RecordedOverviewEvidence)->build((int)$request->user()->id,$metricRows,$startDate,$endDate,empty($validated['account_id']));
+        $outcomeProblem=(new \App\Services\Analytics\OutcomeSemanticGuard)->problem($metricRows);
         $conversionResult = $this->currencyService->convertMetricsRows($metricRows, $targetCurrency);
         $convertedRows = collect($conversionResult['rows']);
 
         // 3. Platform Breakdown (Normalized in Target Currency)
         $platformBreakdown = $convertedRows
             ->groupBy('provider')
-            ->map(function ($group, $provider) {
+            ->map(function ($group, $provider) use($metricRows) {
+                $problem=(new \App\Services\Analytics\OutcomeSemanticGuard)->problem($metricRows->where('provider',$provider));
                 $pSpend = (float) $group->sum('converted_spend');
                 $pConvVal = (float) $group->sum('converted_conversion_value');
                 return [
@@ -253,8 +283,9 @@ class AnalyticsController extends Controller
                     'spend' => round($pSpend, 2),
                     'impressions' => (int) $group->sum('impressions'),
                     'clicks' => (int) $group->sum('clicks'),
-                    'conversions' => (float) $group->sum('conversions'),
-                    'roas' => $pSpend > 0 ? round($pConvVal / $pSpend, 2) : 0.0,
+                    'conversions' => $problem?null:(float) $group->sum('conversions'),
+                    'outcome_reason'=>$problem,
+                    'roas' => $problem?null:($pSpend > 0 ? round($pConvVal / $pSpend, 2) : null),
                 ];
             })
             ->values();
@@ -262,27 +293,31 @@ class AnalyticsController extends Controller
         // 4. Daily Timeline Trend (Normalized in Target Currency)
         $timeline = $convertedRows
             ->groupBy('date')
-            ->map(function ($group, $date) {
+            ->map(function ($group, $date) use($outcomeProblem) {
                 $daySpend = (float) $group->sum('converted_spend');
                 $dayVal = (float) $group->sum('converted_conversion_value');
                 return [
                     'date' => $date,
                     'spend' => round($daySpend, 2),
                     'clicks' => (int) $group->sum('clicks'),
-                    'conversions' => (float) $group->sum('conversions'),
-                    'roas' => $daySpend > 0 ? round($dayVal / $daySpend, 2) : 0.0,
+                    'conversions' => $outcomeProblem?null:(float) $group->sum('conversions'),
+                    'roas' => $outcomeProblem?null:($daySpend > 0 ? round($dayVal / $daySpend, 2) : null),
                 ];
             })
             ->sortBy('date')
             ->values();
 
         $summary = $conversionResult['summary'];
+        if($outcomeProblem){foreach(['conversions','converted_conversion_value','cpa','roas']as$k)$summary[$k]=null;$currencyBreakdown=$currencyBreakdown->map(function($r){$r['conversion_value']=null;return $r;});$conversionResult['conversion_metadata']['unconverted_totals']=array_map(function($r){foreach(['unconverted_conversion_value','unconverted_conversions']as$k)if(array_key_exists($k,$r))$r[$k]=null;return $r;},$conversionResult['conversion_metadata']['unconverted_totals']??[]);}
 
         return response()->json([
+            'recorded_native_evidence'=>$nativeEvidence,
+            'summary_precision'=>'approximate_legacy_reporting_currency_conversion_not_exact_recorded_actuals',
             'date_range' => [
                 'start_date' => $startDate,
                 'end_date' => $endDate,
             ],
+            'outcome_semantics'=>['status'=>$outcomeProblem?'outcomes_withheld':'source_reported_descriptive','reason'=>$outcomeProblem,'delivery_estimand'=>'reported spend/impressions/click events, not unique people','scope'=>'source_reported_descriptive','value'=>'provider_reported_not_verified_sales','cross_source_equivalence'=>false,'note'=>'Currency conversion changes units, not outcome meaning or deduplication.'],
             'reporting_currency' => $targetCurrency,
             'summary' => [
                 'spend' => $summary['converted_spend'],
@@ -312,7 +347,7 @@ class AnalyticsController extends Controller
         $validated = $request->validate([
             'start_date' => ['nullable', 'date_format:Y-m-d'],
             'end_date' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:start_date'],
-            'provider' => ['nullable', 'string', 'in:meta,google,tiktok,snapchat'],
+            'provider' => ['nullable', 'string', 'in:meta,google,tiktok,snapchat,taboola,pinterest,reddit,spotify,linkedin,microsoft,amazon'],
             'status' => ['nullable', 'string'],
             'search' => ['nullable', 'string'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
@@ -349,6 +384,7 @@ class AnalyticsController extends Controller
             });
         }
 
+        if($problem=(new \App\Services\Analytics\MetaDefinitionTransitionGuard)->userProblem($request->user()->id,$startDate,$endDate,$validated['provider']??null,null,true))return response()->json(['success'=>false,'message'=>$problem],409);
         $paginator = $query->paginate($perPage);
 
         // Fetch metrics rows per campaign in the specified date range for currency-aware aggregation
@@ -457,6 +493,7 @@ class AnalyticsController extends Controller
         $startDate = $request->query('start_date', Carbon::now()->subDays(30)->format('Y-m-d'));
         $endDate = $request->query('end_date', Carbon::now()->format('Y-m-d'));
 
+        if($problem=(new \App\Services\Analytics\MetaDefinitionTransitionGuard)->userProblem($request->user()->id,$startDate,$endDate,$campaign->provider,$campaign->connected_ad_account_id))return response()->json(['success'=>false,'message'=>$problem],409);
         $timeline = PerformanceMetric::query()
             ->where('campaign_id', $campaign->id)
             ->whereBetween('date', [$startDate, $endDate])
@@ -475,11 +512,11 @@ class AnalyticsController extends Controller
      */
     public function operationsResearch(
         Request $request,
-        \App\Services\OperationsResearch\AdvertisingOptimizationService $orService,
+        \App\Services\OperationsResearch\OptimizationOrchestrator $orchestrator,
         \App\Services\Advertising\SuggestionBuilder $builder
     ): JsonResponse {
         // The result and its rule-based suggestions come from ONE computation and carry one snapshot_id.
-        $snap = $this->buildSnapshot($request, $orService, $builder);
+        $snap = $this->buildSnapshot($request, $orchestrator, $builder);
 
         return response()->json([
             'success' => true,
@@ -489,16 +526,24 @@ class AnalyticsController extends Controller
         ]);
     }
 
-    private function computeOr(Request $request, $orService): array
+    private function computeOr(Request $request, $orchestrator): array
     {
         $validated = $request->validate([
             'budget' => ['nullable', 'numeric', 'gt:0', 'max:999999999'],
+            'curve_mode' => ['nullable', 'in:assumed,fitted'],
+            'objective' => ['nullable', \Illuminate\Validation\Rule::in(\App\Services\OperationsResearch\ObjectiveEstimandPreflight::OBJECTIVES)],
+            'outcome_basis' => ['nullable', \Illuminate\Validation\Rule::in(\App\Services\OperationsResearch\ObjectiveEstimandPreflight::BASES)],
+            'target_reported_value'=>['nullable','numeric','gt:0','max:999999999999'],
+            'robust_bounds' => ['nullable', 'array:meta,google,tiktok,snapchat,taboola,pinterest,reddit,spotify,linkedin,microsoft,amazon'],
+            'robust_bounds.*' => ['numeric','min:0','lt:1'],
+            'custom_allocation' => ['nullable', 'array:meta,google,tiktok,snapchat,taboola,pinterest,reddit,spotify,linkedin,microsoft,amazon'],
+            'custom_allocation.*' => ['numeric', 'min:0', 'max:999999999999'],
             'budget_mode' => ['nullable', 'in:exact,at_most'],
             'min_marginal_roas' => ['nullable', 'numeric', 'gt:0'],
             'budget_horizon' => ['nullable', 'in:daily,per_30_days'],
             'saturation_multiplier' => ['nullable', 'numeric', 'gt:1', 'max:20'],
             'channel_limits_horizon' => ['nullable', 'in:daily,per_30_days', 'required_with:channel_limits'],
-            'channel_limits' => ['nullable', 'array:meta,google,tiktok,snapchat', 'required_with:channel_limits_horizon'],
+            'channel_limits' => ['nullable', 'array:meta,google,tiktok,snapchat,taboola,pinterest,reddit,spotify,linkedin,microsoft,amazon', 'required_with:channel_limits_horizon'],
             'channel_limits.*.min' => ['nullable', 'numeric', 'min:0', 'max:999999999999'],
             'channel_limits.*.max' => ['nullable', 'numeric', 'gt:0', 'max:999999999999'],
         ]);
@@ -514,8 +559,6 @@ class AnalyticsController extends Controller
             ];
         }
 
-        $result = $orService->optimizeForUser($request->user()->id, $options);
-
-        return $result->toArray();
+        return $orchestrator->run($request->user()->id, $options);
     }
 }

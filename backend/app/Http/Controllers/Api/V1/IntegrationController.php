@@ -61,7 +61,9 @@ class IntegrationController extends Controller
     {
         $provider = strtolower($provider);
         $request->validate([
-            'code' => 'required|string',
+            'code' => $provider==='x'?'nullable|string':'required|string',
+            'oauth_token' => $provider==='x'?'required|string':'nullable|string',
+            'oauth_verifier' => $provider==='x'?'required|string':'nullable|string',
             'state' => 'required|string',
             'redirect_uri' => 'required|url',
         ]);
@@ -84,7 +86,7 @@ class IntegrationController extends Controller
 
         try {
             $adapter = $this->oauthManager->getAdapter($provider);
-            $tokenData = $adapter->handleOAuthCallback($request->code, $request->redirect_uri);
+            $tokenData = $provider==='x' ? $adapter->complete($request->state,$request->oauth_token,$request->oauth_verifier) : $adapter->handleOAuthCallback($request->code, $request->redirect_uri);
 
             // Discover ad accounts using the access token
             $discoveredAccounts = $adapter->discoverAccounts($tokenData['access_token']);
@@ -119,6 +121,21 @@ class IntegrationController extends Controller
                 ],
             ], 400);
         }
+    }
+
+    /** Client-credentials are platform-admin credentials, never exposed to other tenants. */
+    public function discoverCredentialAccounts(Request $request, string $provider): JsonResponse
+    {
+        abort_unless($request->user()->can('manage-developers'), 403);
+        abort_unless(in_array($provider, ['taboola', 'apple'], true), 404);
+        $adapter = $this->oauthManager->getAdapter($provider);
+        $token = $adapter->issueToken();
+        $accounts = $adapter->discoverAccounts($token['access_token']);
+        $token['expires_at'] = $token['expires_at']->toIso8601String();
+        Cache::put("discovered_accounts:{$provider}:{$request->user()->id}", Crypt::encryptString(json_encode([
+            'token_data' => $token, 'accounts' => $accounts,
+        ], JSON_THROW_ON_ERROR)), 1800);
+        return response()->json(['success' => true, 'data' => ['provider' => $provider, 'accounts' => $accounts, 'discovered_count' => count($accounts)]]);
     }
 
     /**
@@ -237,10 +254,11 @@ class IntegrationController extends Controller
         }
 
         $accounts = $query->orderBy('account_name', 'asc')->get();
+        $provenance=(new \App\Services\Advertising\SyncProvenance)->forAccounts($accounts);
 
         return response()->json([
             'success' => true,
-            'data' => $accounts->map->toSafeArray(),
+            'data' => $accounts->map(fn($a)=>$a->toSafeArray()+['sync_provenance'=>$provenance[$a->id]]),
         ]);
     }
 
@@ -284,6 +302,23 @@ class IntegrationController extends Controller
             'success' => true,
             'message' => "Disconnected account '{$account->account_name}'.",
         ]);
+    }
+
+    /** Delivery-only Apple data never enters revenue tables or optimizer. */
+    public function appleDeliveryReport(Request $request, int $id): JsonResponse
+    {
+        $account = ConnectedAdAccount::where('user_id', $request->user()->id)->where('provider', 'apple')->findOrFail($id);
+        $data = $request->validate(['start_date' => 'required|date_format:Y-m-d', 'end_date' => 'required|date_format:Y-m-d|after_or_equal:start_date']);
+        $result = $this->oauthManager->getAdapter('apple')->deliveryReport($account, $data['start_date'], $data['end_date']);
+        unset($result['raw']);
+        return response()->json(['success' => true, 'data' => $result]);
+    }
+
+    public function xDeliveryReport(Request $request, int $id): JsonResponse
+    {
+        $account=ConnectedAdAccount::where('user_id',$request->user()->id)->where('provider','x')->findOrFail($id);
+        $v=$request->validate(['start_date'=>'required|date_format:Y-m-d','end_date'=>'required|date_format:Y-m-d|after_or_equal:start_date']);
+        return response()->json(['success'=>true,'data'=>$this->oauthManager->getAdapter('x')->deliveryReport($account,$v['start_date'],$v['end_date'])]);
     }
 
     private function redirectNotAllowed(): JsonResponse

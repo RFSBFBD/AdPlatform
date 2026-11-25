@@ -10,7 +10,7 @@ use Illuminate\Http\Request;
 
 class DeveloperConfigController extends Controller
 {
-    protected array $supportedProviders = ['meta', 'google', 'tiktok', 'snapchat'];
+    protected array $supportedProviders = ['meta', 'google', 'tiktok', 'snapchat', 'taboola', 'pinterest', 'reddit', 'spotify', 'linkedin', 'microsoft', 'amazon', 'apple', 'x'];
 
     /**
      * List all developer configurations with masked secrets.
@@ -60,6 +60,7 @@ class DeveloperConfigController extends Controller
             'redirect_uri' => 'nullable|url|max:500',
             'api_version' => 'nullable|string|max:50',
             'is_enabled' => 'nullable|boolean',
+            'region' => 'nullable|in:NA,EU,FE',
         ]);
 
         $config = ProviderDeveloperConfig::firstOrNew(['provider' => $provider]);
@@ -89,6 +90,7 @@ class DeveloperConfigController extends Controller
             $config->is_enabled = $request->boolean('is_enabled');
         }
 
+        if ($provider==='amazon' && $request->has('region')) { $config->extra_settings=array_merge($config->extra_settings??[],['region'=>$request->input('region')]); }
         $config->save();
 
         // Audit log without exposing raw secrets

@@ -6,7 +6,10 @@ use App\Exceptions\OAuthTokenExpiredException;
 use App\Exceptions\ProviderRateLimitException;
 use App\Models\ConnectedAdAccount;
 use App\Models\ProviderDeveloperConfig;
+use App\Services\Advertising\AccountMetadataEvidence;
 use App\Services\Advertising\Contracts\AdvertisingProviderInterface;
+use App\Services\Advertising\FetchBoundary;
+use App\Services\Advertising\MetricOperand;
 use Carbon\Carbon;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -15,16 +18,20 @@ use RuntimeException;
 /**
  * Snapchat Marketing API (Ads API). CODE ONLY: never run against a live Snap account.
  * Endpoint shapes come from the official docs (developers.snap.com/marketing-api/Ads-API/*),
- * listed in docs/PROVIDER_SOURCES.md. Reporting is ACCOUNT-LEVEL DAILY only (no campaign breakdown),
- * because the breakdown response shape was not verifiable in the docs.
+ * listed in docs/PROVIDER_SOURCES.md. Bare ACCOUNT-LEVEL DAILY stats supports spend only.
+ * Return separate spend inspection, never canonical delivery or conversion metrics.
  */
 class SnapchatAdsAdapter implements AdvertisingProviderInterface
 {
     public const API = 'https://adsapi.snapchat.com/v1';
+
     public const AUTH = 'https://accounts.snapchat.com/login/oauth2';
+
     /** Documented defaults, sent explicitly so the attribution rule is never implicit. */
     public const SWIPE_WINDOW = '28_DAY';
+
     public const VIEW_WINDOW = '1_DAY';
+
     /** Days per stats request. The documented API gives no DAY-range limit, so this is a cautious engineering choice. */
     public const CHUNK_DAYS = 30;
 
@@ -44,7 +51,7 @@ class SnapchatAdsAdapter implements AdvertisingProviderInterface
     {
         $this->ensureConfigured();
 
-        return self::AUTH . '/authorize?' . http_build_query([
+        return self::AUTH.'/authorize?'.http_build_query([
             'client_id' => $this->config->app_id,
             'redirect_uri' => $redirectUri,
             'response_type' => 'code',
@@ -56,7 +63,7 @@ class SnapchatAdsAdapter implements AdvertisingProviderInterface
     public function handleOAuthCallback(string $code, string $redirectUri): array
     {
         $this->ensureConfigured();
-        $res = Http::asForm()->timeout(30)->connectTimeout(10)->post(self::AUTH . '/access_token', [
+        $res = Http::asForm()->timeout(30)->connectTimeout(10)->post(self::AUTH.'/access_token', [
             'grant_type' => 'authorization_code',
             'client_id' => $this->config->app_id,
             'client_secret' => $this->config->app_secret,
@@ -64,7 +71,7 @@ class SnapchatAdsAdapter implements AdvertisingProviderInterface
             'redirect_uri' => $redirectUri,
         ]);
         if ($res->failed() || empty($res->json('access_token'))) {
-            throw new RuntimeException('Snapchat OAuth exchange failed (HTTP ' . $res->status() . ').');
+            throw new RuntimeException('Snapchat OAuth exchange failed (HTTP '.$res->status().').');
         }
 
         return $this->tokenPayload($res, null);
@@ -73,14 +80,14 @@ class SnapchatAdsAdapter implements AdvertisingProviderInterface
     public function refreshToken(string $refreshToken): array
     {
         $this->ensureConfigured();
-        $res = Http::asForm()->timeout(30)->connectTimeout(10)->post(self::AUTH . '/access_token', [
+        $res = Http::asForm()->timeout(30)->connectTimeout(10)->post(self::AUTH.'/access_token', [
             'grant_type' => 'refresh_token',
             'client_id' => $this->config->app_id,
             'client_secret' => $this->config->app_secret,
             'refresh_token' => $refreshToken,
         ]);
         if ($res->failed() || empty($res->json('access_token'))) {
-            throw new OAuthTokenExpiredException('Failed to refresh Snapchat token (HTTP ' . $res->status() . ').', 'snapchat');
+            throw new OAuthTokenExpiredException('Failed to refresh Snapchat token (HTTP '.$res->status().').', 'snapchat');
         }
 
         return $this->tokenPayload($res, $refreshToken);
@@ -102,23 +109,36 @@ class SnapchatAdsAdapter implements AdvertisingProviderInterface
     {
         $res = $this->get($accessToken, '/me/organizations', ['with_ad_accounts' => 'true']);
         if ($res->failed() || strtoupper((string) $res->json('request_status')) !== 'SUCCESS') {
-            throw new RuntimeException('Failed to discover Snapchat ad accounts (HTTP ' . $res->status() . ').');
+            throw new RuntimeException('Failed to discover Snapchat ad accounts (HTTP '.$res->status().').');
         }
 
+        $body = $res->json();
+        if (! is_array($body) || array_key_exists('paging', $body)) {
+            throw new RuntimeException('Snapchat discovery paging requires verified handling.');
+        }
         $accounts = [];
-        foreach ((array) $res->json('organizations', []) as $row) {
+        $seenAccounts = [];
+        $seenOrgs = [];
+        foreach (FetchBoundary::rows($body['organizations'] ?? null, 'Snapchat organizations') as $row) {
+            if (($row['sub_request_status'] ?? null) !== 'SUCCESS') {
+                throw new RuntimeException('Snapchat organization subrequest failed.');
+            }
             $org = $row['organization'] ?? [];
-            foreach ((array) ($org['ad_accounts'] ?? []) as $a) {
-                if (empty($a['id'])) {
-                    continue;
-                }
+            FetchBoundary::unique($seenOrgs, FetchBoundary::id($org['id'] ?? null, 'Snapchat organization'), 'Snapchat organization');
+            if (array_key_exists('paging', $org)) {
+                throw new RuntimeException('Snapchat nested discovery paging requires verified handling.');
+            }
+            foreach (FetchBoundary::rows($org['ad_accounts'] ?? null, 'Snapchat account roster') as $a) {
+                $id = FetchBoundary::id($a['id'] ?? null, 'Snapchat account');
+                FetchBoundary::unique($seenAccounts, $id, 'Snapchat account');
                 // Currency and timezone must come from the account itself. No default is invented.
                 $accounts[] = [
                     'provider' => 'snapchat',
                     'external_account_id' => (string) $a['id'],
-                    'account_name' => $a['name'] ?? ('Snapchat ad account ' . $a['id']),
+                    'account_name' => $a['name'] ?? ('Snapchat ad account '.$a['id']),
                     'currency' => $a['currency'] ?? null,
                     'timezone' => $a['timezone'] ?? null,
+                    'metadata_source' => ['version' => AccountMetadataEvidence::VERSION, 'currency' => $a['currency'] ?? null, 'timezone' => $a['timezone'] ?? null],
                     'raw_status' => $a['status'] ?? null,
                 ];
             }
@@ -136,7 +156,7 @@ class SnapchatAdsAdapter implements AdvertisingProviderInterface
     public function fetchInsights(ConnectedAdAccount $account, string $startDate, string $endDate): array
     {
         $tz = (string) $account->timezone;
-        if ($tz === '' || !in_array($tz, \DateTimeZone::listIdentifiers(), true)) {
+        if ($tz === '' || ! in_array($tz, \DateTimeZone::listIdentifiers(), true)) {
             throw new RuntimeException('Snapchat account timezone is missing or unknown; daily boundaries cannot be set, so nothing was pulled.');
         }
         if (empty($account->currency)) {
@@ -145,6 +165,16 @@ class SnapchatAdsAdapter implements AdvertisingProviderInterface
 
         $metrics = [];
         $raw = [];
+        $seenDays = [];
+        foreach ([$startDate, $endDate] as $d) {
+            $v = \DateTimeImmutable::createFromFormat('!Y-m-d', $d);
+            if (! $v || $v->format('Y-m-d') !== $d) {
+                throw new RuntimeException('Snapchat daily range invalid.');
+            }
+        }
+        if ($startDate > $endDate || (new \DateTimeImmutable($startDate))->diff(new \DateTimeImmutable($endDate))->days > 365) {
+            throw new RuntimeException('Snapchat range exceeds local366-day limit or is reversed.');
+        }
         $cursor = Carbon::parse($startDate, $tz)->startOfDay();
         $last = Carbon::parse($endDate, $tz)->startOfDay();
 
@@ -158,34 +188,43 @@ class SnapchatAdsAdapter implements AdvertisingProviderInterface
             $raw[] = $json;
 
             if ($res->failed() || strtoupper((string) ($json['request_status'] ?? '')) !== 'SUCCESS') {
-                throw new RuntimeException('Failed to fetch Snapchat stats (HTTP ' . $res->status() . ').');
+                throw new RuntimeException('Failed to fetch Snapchat stats (HTTP '.$res->status().').');
             }
-            foreach ((array) ($json['timeseries_stats'] ?? []) as $entry) {
+            if (! is_array($json) || array_is_list($json) || array_key_exists('paging', $json)) {
+                throw new RuntimeException('Snapchat envelope/paging requires verification.');
+            }
+            $entries = FetchBoundary::rows($json['timeseries_stats'] ?? null, 'Snapchat timeseries_stats');
+            if (count($entries) !== 1) {
+                throw new RuntimeException('Snapchat account stats require exactly one explicit subrequest.');
+            }
+            foreach ($entries as $entry) {
                 if (strtoupper((string) ($entry['sub_request_status'] ?? '')) !== 'SUCCESS') {
                     throw new RuntimeException('Snapchat stats returned a failed sub-request; nothing was stored for this range.');
                 }
-                foreach ((array) ($entry['timeseries_stat']['timeseries'] ?? []) as $day) {
+                $series = $entry['timeseries_stat'] ?? null;
+                if (! is_array($series) || array_key_exists('paging', $series)) {
+                    throw new RuntimeException('Snapchat timeseries wrapper/paging invalid.');
+                }
+                foreach (FetchBoundary::rows($series['timeseries'] ?? null, 'Snapchat daily series') as $day) {
+                    $stamp = $day['start_time'] ?? null;
+                    if (! is_string($stamp) || ! preg_match('/^\d{4}-\d{2}-\d{2}T/', $stamp)) {
+                        throw new RuntimeException('Snapchat daily timestamp missing.');
+                    }
+                    $date = substr($stamp, 0, 10);
+                    if ($date < $cursor->format('Y-m-d') || $date > $chunkEnd->format('Y-m-d')) {
+                        throw new RuntimeException('Snapchat day outside requested chunk.');
+                    }
+                    FetchBoundary::unique($seenDays, $date, 'Snapchat daily report');
                     $s = $day['stats'] ?? [];
-                    // `spend` and purchase value are micro-currency of the account currency (1,000,000 = 1.00).
-                    $metrics[] = [
-                        'external_campaign_id' => null,
-                        'external_ad_set_id' => null,
-                        'external_ad_id' => null,
-                        'date' => substr((string) $day['start_time'], 0, 10),
-                        'spend' => ((float) ($s['spend'] ?? 0)) / 1000000,
-                        'impressions' => (int) ($s['impressions'] ?? 0),
-                        // Snap reports swipe-ups, not link clicks. They are stored in `clicks` and are not the same thing.
-                        'clicks' => (int) ($s['swipes'] ?? 0),
-                        'conversions' => (float) ($s['conversion_purchases'] ?? 0),
-                        // Present only for ads tracked through Snap Pixel; absent means 0 reported, not "no sales".
-                        'conversion_value' => ((float) ($s['conversion_purchases_value'] ?? 0)) / 1000000,
-                    ];
+                    // Bare ad-account stats documents spend only. Extra payload fields do not establish support.
+                    $metrics[] = ['date' => $date, 'spend' => MetricOperand::read($s, 'spend', false, 1000000),
+                        'currency' => $account->currency, 'source_scope' => 'bare_ad_account_spend_only'];
                 }
             }
             $cursor = $chunkEnd->copy()->addDay();
         }
 
-        return ['endpoint' => '/adaccounts/{id}/stats (DAY, account level)', 'raw' => $raw, 'metrics' => $metrics];
+        return ['fetch_status' => 'spend_inspection_only_not_canonical', 'canonical_import_status' => 'unsupported_source_scope', 'reason' => 'Bare Snapchat ad-account stats supports spend only. Canonical delivery and outcome import is unavailable; no replacement hierarchy is inferred.', 'endpoint' => '/adaccounts/{id}/stats (DAY, spend only)', 'raw' => $raw, 'spend_inspection' => $metrics, 'metrics' => []];
     }
 
     private function statsRequest(ConnectedAdAccount $account, Carbon $start, Carbon $endExclusive): Response
@@ -193,16 +232,15 @@ class SnapchatAdsAdapter implements AdvertisingProviderInterface
         $fmt = 'Y-m-d\TH:i:s.vP';
         $query = [
             'granularity' => 'DAY',
-            'fields' => 'impressions,swipes,spend,conversion_purchases,conversion_purchases_value',
+            'fields' => 'spend',
+            'omit_empty' => 'false',
             'start_time' => $start->format($fmt),
             'end_time' => $endExclusive->format($fmt),
-            'swipe_up_attribution_window' => self::SWIPE_WINDOW,
-            'view_attribution_window' => self::VIEW_WINDOW,
         ];
-        $path = '/adaccounts/' . $account->external_account_id . '/stats';
+        $path = '/adaccounts/'.$account->external_account_id.'/stats';
 
         $res = $this->get((string) $account->access_token, $path, $query);
-        if ($res->status() === 401 && !empty($account->refresh_token)) {
+        if ($res->status() === 401 && ! empty($account->refresh_token)) {
             try {
                 $new = $this->refreshToken($account->refresh_token);
                 $account->update(['access_token' => $new['access_token'], 'refresh_token' => $new['refresh_token'], 'token_expires_at' => $new['expires_at']]);
@@ -214,7 +252,7 @@ class SnapchatAdsAdapter implements AdvertisingProviderInterface
         }
         if (in_array($res->status(), [401, 403], true)) {
             $account->update(['status' => 'token_expired']);
-            throw new OAuthTokenExpiredException('Snapchat authorization rejected: HTTP ' . $res->status(), 'snapchat', $account->id);
+            throw new OAuthTokenExpiredException('Snapchat authorization rejected: HTTP '.$res->status(), 'snapchat', $account->id);
         }
 
         return $res;
@@ -224,12 +262,12 @@ class SnapchatAdsAdapter implements AdvertisingProviderInterface
     {
         $delayMs = 200;
         for ($attempt = 1; ; $attempt++) {
-            $res = Http::withToken($token)->timeout(30)->connectTimeout(10)->get(self::API . $path, $query);
+            $res = Http::withoutRedirecting()->withToken($token)->timeout(30)->connectTimeout(10)->get(self::API.$path, $query);
             if ($res->status() === 429) {
                 if ($attempt >= 3) {
                     throw new ProviderRateLimitException('Snapchat rate limit reached.', 'snapchat');
                 }
-            } elseif (!($res->serverError() && $attempt < 3)) {
+            } elseif (! ($res->serverError() && $attempt < 3)) {
                 return $res;
             }
             usleep($delayMs * 1000);
@@ -239,7 +277,7 @@ class SnapchatAdsAdapter implements AdvertisingProviderInterface
 
     protected function ensureConfigured(): void
     {
-        if (!$this->config || empty($this->config->app_id) || empty($this->config->app_secret)) {
+        if (! $this->config || empty($this->config->app_id) || empty($this->config->app_secret)) {
             throw new RuntimeException('Snapchat OAuth app credentials have not been configured.');
         }
     }

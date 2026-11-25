@@ -11,13 +11,13 @@ export interface OverviewSummary {
   spend: number;
   impressions: number;
   clicks: number;
-  conversions: number;
-  conversion_value: number;
+  conversions: number | null;
+  conversion_value: number | null;
   cpc: number;
   cpm: number;
   ctr: number;
-  roas: number;
-  cpa: number;
+  roas: number | null;
+  cpa: number | null;
 }
 
 export interface OrSuggestionItem {
@@ -31,16 +31,16 @@ export interface PlatformItem {
   spend: number;
   impressions: number;
   clicks: number;
-  conversions: number;
-  roas: number;
+  conversions: number | null;
+  roas: number | null;
 }
 
 export interface TimelineItem {
   date: string;
   spend: number;
   clicks: number;
-  conversions: number;
-  roas: number;
+  conversions: number | null;
+  roas: number | null;
 }
 
 @Component({
@@ -53,49 +53,49 @@ export interface TimelineItem {
       <div class="page-header">
         <div>
           <h2 class="title">Advertising Intelligence & Decision Hub</h2>
-          <p class="subtitle">Unified cross-channel metrics aggregated directly from official provider APIs.</p>
+          <p class="subtitle">Stored report overview. Reporting-currency summaries below are approximate; exact native operands are shown separately.</p>
         </div>
         <div class="filters-row">
           <!-- Platform Filter -->
           <div class="btn-group">
-            <button 
-              type="button" 
-              class="filter-btn" 
+            <button
+              type="button"
+              class="filter-btn"
               [class.active]="selectedPlatform() === ''"
               (click)="setPlatform('')"
             >
               All Channels
             </button>
-            <button 
-              type="button" 
-              class="filter-btn" 
+            <button
+              type="button"
+              class="filter-btn"
               [class.active]="selectedPlatform() === 'meta'"
               (click)="setPlatform('meta')"
             >
               <app-icon name="meta" [size]="15"></app-icon>
               <span>Meta</span>
             </button>
-            <button 
-              type="button" 
-              class="filter-btn" 
+            <button
+              type="button"
+              class="filter-btn"
               [class.active]="selectedPlatform() === 'google'"
               (click)="setPlatform('google')"
             >
               <app-icon name="google" [size]="15"></app-icon>
               <span>Google</span>
             </button>
-            <button 
-              type="button" 
-              class="filter-btn" 
+            <button
+              type="button"
+              class="filter-btn"
               [class.active]="selectedPlatform() === 'tiktok'"
               (click)="setPlatform('tiktok')"
             >
               <app-icon name="tiktok" [size]="15"></app-icon>
               <span>TikTok</span>
             </button>
-            <button 
-              type="button" 
-              class="filter-btn" 
+            <button
+              type="button"
+              class="filter-btn"
               [class.active]="selectedPlatform() === 'snapchat'"
               (click)="setPlatform('snapchat')"
             >
@@ -105,25 +105,25 @@ export interface TimelineItem {
 
           <!-- Date Range Filter -->
           <div class="btn-group">
-            <button 
-              type="button" 
-              class="filter-btn" 
+            <button
+              type="button"
+              class="filter-btn"
               [class.active]="dateRangePreset() === '7d'"
               (click)="setDatePreset('7d')"
             >
               Last 7D
             </button>
-            <button 
-              type="button" 
-              class="filter-btn" 
+            <button
+              type="button"
+              class="filter-btn"
               [class.active]="dateRangePreset() === '30d'"
               (click)="setDatePreset('30d')"
             >
               Last 30D
             </button>
-            <button 
-              type="button" 
-              class="filter-btn" 
+            <button
+              type="button"
+              class="filter-btn"
               [class.active]="dateRangePreset() === '90d'"
               (click)="setDatePreset('90d')"
             >
@@ -133,27 +133,39 @@ export interface TimelineItem {
         </div>
       </div>
 
+      @if (outcomeReason()) { <div role="status" class="outcome-boundary" style="padding:16px;margin-bottom:16px;border:1px solid #f59e0b;border-radius:12px;background:#fffbeb;color:#92400e">{{ outcomeReason() }} Spend and delivery event totals remain separate. They are not unique people. Joint provider-outcome budget optimization is unavailable without comparable source evidence.</div> }
+      @if(nativeEvidence();as evidence){
+        <section class="native-evidence" aria-label="Exact native-currency recorded operands">
+          <h3>Native-currency recorded operands</h3><p>{{evidence.limits}}</p>
+          <p>These native operands are separate from legacy reporting-currency estimates below. Currency conversion and chart coordinates are approximate.</p>
+          @for(group of nativeGroups();track group.key){
+            <div class="native-group"><strong>{{group.key}}</strong><p>Spend {{nativeValue(group.value,'spend')}} · impressions {{nativeValue(group.value,'impressions')}} · clicks {{nativeValue(group.value,'clicks')}}</p>
+            <p>Reported outcome value {{nativeValue(group.value,'conversion_value')}}. {{group.value.recorded_arithmetic.arithmetic==='unavailable_original_source_integrity'?'Current original source is unavailable or failed revalidation. Legacy values are not substituted.':group.value.recorded_arithmetic.arithmetic==='exact_over_original_reported_delivery_operands'?'Original provider tokens, returned rows only. Canonical outcomes unavailable.':'Exact stored operands, original source precision unverified.'}}</p>@if(group.value.reason){<p>{{group.value.reason}}</p>}</div>
+          }
+        </section>
+      }
+      <p class="summary-precision">Legacy reporting-currency summary. Values and charts are approximate and may use earlier rounded stored operands. They are not the exact native-source figures above.</p>
       <!-- Quick Metrics Grid -->
       <div class="stats-grid">
-        <app-stat-card 
-          title="Total Ad Spend" 
-          [value]="(summary().spend | currency:reportingCurrency():'symbol':'1.2-2') || '0.00'" 
-          [subtext]="'Synced provider spend in reporting currency (' + reportingCurrency() + ')'" 
+        <app-stat-card
+          title="Approximate reporting spend"
+          [value]="(summary().spend | currency:reportingCurrency():'symbol':'1.2-2') || '0.00'"
+          [subtext]="'Legacy stored spend converted to (' + reportingCurrency() + ')'"
         />
-        <app-stat-card 
-          title="Total Impressions" 
-          [value]="(summary().impressions | number) || '0'" 
-          subtext="Verified provider reach" 
+        <app-stat-card
+          title="Total Impressions"
+          [value]="(summary().impressions | number) || '0'"
+          subtext="Reported impression events, not unique reach"
         />
-        <app-stat-card 
-          title="Total Clicks" 
-          [value]="(summary().clicks | number) || '0'" 
-          [subtext]="'CTR: ' + summary().ctr + '% • CPC: ' + summary().cpc + ' ' + reportingCurrency()" 
+        <app-stat-card
+          title="Total Clicks"
+          [value]="(summary().clicks | number) || '0'"
+          [subtext]="'CTR: ' + summary().ctr + '% • CPC: ' + summary().cpc + ' ' + reportingCurrency()"
         />
-        <app-stat-card 
-          title="Blended ROAS" 
-          [value]="summary().roas + 'x'" 
-          [subtext]="'Conversions: ' + (summary().conversions | number) + ' • CPA: ' + summary().cpa + ' ' + reportingCurrency()" 
+        <app-stat-card
+          title="Blended ROAS"
+          [value]="summary().roas === null ? 'Withheld' : summary().roas + 'x'"
+          [subtext]="summary().roas === null ? 'Outcome definitions are not comparable in this scope' : 'Provider-attributed value / spend, not verified sales'"
         />
       </div>
 
@@ -165,7 +177,7 @@ export interface TimelineItem {
               <app-icon name="trend-up" [size]="18"></app-icon>
             </div>
             <div class="decision-content">
-              <span class="decision-tag">TOP OBSERVED ROAS</span>
+              <span class="decision-tag">SOURCE-REPORTED OUTCOMES</span>
               <p class="decision-text">{{ getBestChannelInsight() }}</p>
             </div>
           </div>
@@ -194,7 +206,7 @@ export interface TimelineItem {
             }
           </ul>
         } @else {
-          <p class="or-empty">No grounded suggestions yet. Connect an ad account and sync, then the engine reads the same data here.</p>
+          <p class="or-empty">No portfolio suggestion is available. Provider-reported outcomes are not a verified joint business objective; supported source-scoped entity scenarios remain separate.</p>
         }
       </div>
 
@@ -221,33 +233,33 @@ export interface TimelineItem {
 
               <!-- Metric Mode Selector -->
               <div class="metric-selector">
-                <button 
-                  type="button" 
-                  class="metric-btn" 
+                <button
+                  type="button"
+                  class="metric-btn"
                   [class.active]="selectedMetric() === 'spend'"
                   (click)="selectedMetric.set('spend')"
                 >
                   Spend ($)
                 </button>
-                <button 
-                  type="button" 
-                  class="metric-btn" 
+                <button
+                  type="button"
+                  class="metric-btn"
                   [class.active]="selectedMetric() === 'roas'"
                   (click)="selectedMetric.set('roas')"
                 >
                   ROAS (x)
                 </button>
-                <button 
-                  type="button" 
-                  class="metric-btn" 
+                <button
+                  type="button"
+                  class="metric-btn"
                   [class.active]="selectedMetric() === 'clicks'"
                   (click)="selectedMetric.set('clicks')"
                 >
                   Clicks
                 </button>
-                <button 
-                  type="button" 
-                  class="metric-btn" 
+                <button
+                  type="button"
+                  class="metric-btn"
                   [class.active]="selectedMetric() === 'conversions'"
                   (click)="selectedMetric.set('conversions')"
                 >
@@ -284,32 +296,32 @@ export interface TimelineItem {
 
                 <!-- Main Smooth Stroke Path -->
                 @if (chartCurvePath()) {
-                  <path 
-                    [attr.d]="chartCurvePath()" 
-                    fill="none" 
-                    stroke="url(#curveLineGrad)" 
-                    stroke-width="3" 
+                  <path
+                    [attr.d]="chartCurvePath()"
+                    fill="none"
+                    stroke="url(#curveLineGrad)"
+                    stroke-width="3"
                     stroke-linecap="round"
                   />
                 }
 
                 <!-- Active Hover Crosshair Line & Point -->
                 @if (hoverPoint()) {
-                  <line 
-                    [attr.x1]="hoverPoint()!.x" 
-                    y1="20" 
-                    [attr.x2]="hoverPoint()!.x" 
-                    y2="180" 
-                    stroke="#06b6d4" 
-                    stroke-width="1.5" 
+                  <line
+                    [attr.x1]="hoverPoint()!.x"
+                    y1="20"
+                    [attr.x2]="hoverPoint()!.x"
+                    y2="180"
+                    stroke="#06b6d4"
+                    stroke-width="1.5"
                     stroke-dasharray="3,3"
                   />
-                  <circle 
-                    [attr.cx]="hoverPoint()!.x" 
-                    [attr.cy]="hoverPoint()!.y" 
-                    r="5" 
-                    fill="#06b6d4" 
-                    stroke="#ffffff" 
+                  <circle
+                    [attr.cx]="hoverPoint()!.x"
+                    [attr.cy]="hoverPoint()!.y"
+                    r="5"
+                    fill="#06b6d4"
+                    stroke="#ffffff"
                     stroke-width="2"
                   />
                 }
@@ -317,9 +329,9 @@ export interface TimelineItem {
 
               <!-- Floating Tooltip Box -->
               @if (hoverPoint() && hoverPoint()!.item) {
-                <div 
-                  class="chart-tooltip" 
-                  [style.left.px]="tooltipX()" 
+                <div
+                  class="chart-tooltip"
+                  [style.left.px]="tooltipX()"
                   [style.top.px]="tooltipY()"
                 >
                   <div class="tooltip-date">{{ hoverPoint()!.item.date }}</div>
@@ -328,7 +340,7 @@ export interface TimelineItem {
                     <span class="tooltip-val">{{ formatMetricValue(hoverPoint()!.item) }}</span>
                   </div>
                   <div class="tooltip-sub">
-                    <span>Clicks: {{ hoverPoint()!.item.clicks }}</span> • <span>ROAS: {{ hoverPoint()!.item.roas }}x</span>
+                    <span>Clicks: {{ hoverPoint()!.item.clicks }}</span> • <span>ROAS: {{ hoverPoint()!.item.roas === null ? 'Unknown' : hoverPoint()!.item.roas + 'x' }}</span>
                   </div>
                 </div>
               }
@@ -355,13 +367,13 @@ export interface TimelineItem {
                         <app-icon [name]="plat.provider" [size]="16"></app-icon>
                         <span>{{ plat.provider | uppercase }}</span>
                       </span>
-                      <span class="platform-roas-pill">{{ plat.roas }}x ROAS</span>
+                      <span class="platform-roas-pill">{{ plat.roas === null ? 'Outcome withheld' : plat.roas + 'x reported-value ROAS' }}</span>
                     </div>
                     <span class="platform-spend">{{ plat.spend | currency:reportingCurrency():'symbol':'1.2-2' }}</span>
                   </div>
 
                   <div class="progress-bar-bg">
-                    <div 
+                    <div
                       [class]="'progress-bar-fill ' + plat.provider"
                       [style.width.%]="summary().spend > 0 ? (plat.spend / summary().spend) * 100 : 0"
                     ></div>
@@ -369,7 +381,7 @@ export interface TimelineItem {
 
                   <div class="platform-metrics-row">
                     <span>Clicks: <strong>{{ plat.clicks | number }}</strong></span>
-                    <span>Conv: <strong>{{ plat.conversions | number }}</strong></span>
+                    <span>Conv: <strong>{{ plat.conversions === null ? 'Unknown' : (plat.conversions | number) }}</strong></span>
                     <span>Share: <strong>{{ summary().spend > 0 ? ((plat.spend / summary().spend) * 100 | number:'1.0-1') : 0 }}%</strong></span>
                   </div>
                 </div>
@@ -790,6 +802,7 @@ export interface TimelineItem {
     .or-severity[data-severity='attention'] { background: var(--danger-bg); color: var(--danger); }
     .or-severity[data-severity='scenario'] { background: var(--primary-light); color: var(--primary); }
     .or-suggestion-title { color: var(--text-main); }
+    .native-evidence{padding:18px;border:1px solid #cbd5e1;border-radius:12px;margin-bottom:20px;font-size:13px;overflow-wrap:anywhere}.native-group{border-top:1px solid #e2e8f0;padding-top:10px}.native-evidence p{line-height:1.6}
     .or-empty { margin-top: 0.75rem; font-size: 0.8125rem; color: var(--text-muted); }
   `]
 })
@@ -800,6 +813,11 @@ export class DashboardFeatureComponent implements OnInit {
   readonly orSuggestions = signal<OrSuggestionItem[]>([]);
   readonly selectedPlatform = signal<string>('');
   readonly dateRangePreset = signal<'7d' | '30d' | '90d'>('30d');
+  private overviewRequest=0;
+  readonly nativeEvidence=signal<any>(null);
+  nativeGroups=()=>Object.entries(this.nativeEvidence()?.groups??{}).map(([key,value])=>({key,value:value as any}));
+  nativeValue=(g:any,k:string)=>g.recorded_arithmetic?.metrics?.[k]?.decimal??'unknown';
+  readonly outcomeReason=signal<string|null>(null);
   readonly selectedMetric = signal<'spend' | 'roas' | 'clicks' | 'conversions'>('spend');
 
   readonly summary = signal<OverviewSummary>({
@@ -850,7 +868,8 @@ export class DashboardFeatureComponent implements OnInit {
   }
 
   fetchOverview(): void {
-    this.isLoading.set(true);
+    const requestId=++this.overviewRequest;
+    this.isLoading.set(true);this.nativeEvidence.set(null);
 
     const days = this.dateRangePreset() === '7d' ? 7 : (this.dateRangePreset() === '90d' ? 90 : 30);
     const end = new Date().toISOString().split('T')[0];
@@ -868,10 +887,15 @@ export class DashboardFeatureComponent implements OnInit {
       platforms: PlatformItem[];
       timeline: TimelineItem[];
       reporting_currency?: string;
+      outcome_semantics?: {reason?:string|null};
+      recorded_native_evidence?:any;
     }>(url).subscribe({
       next: (res) => {
+        if(requestId!==this.overviewRequest)return;
         this.isLoading.set(false);
         if (res.summary) {
+          this.nativeEvidence.set(res.recorded_native_evidence??null);
+          this.outcomeReason.set(res.outcome_semantics?.reason || null);
           this.summary.set(res.summary);
           this.platforms.set(res.platforms || []);
           this.timeline.set(res.timeline || []);
@@ -879,15 +903,17 @@ export class DashboardFeatureComponent implements OnInit {
         }
       },
       error: () => {
+        if(requestId!==this.overviewRequest)return;
         this.isLoading.set(false);
       }
     });
   }
 
   getBestChannelInsight(): string {
-    const list = this.platforms();
+    if(this.outcomeReason())return 'Reported provider outcomes are not a comparable joint business objective. View each provider separately; no cross-provider best-channel verdict.';
+    const list = this.platforms().filter(p=>p.roas!==null);
     if (list.length === 0) return 'Analyzing channel performance metrics...';
-    const sorted = [...list].sort((a, b) => b.roas - a.roas);
+    const sorted = [...list].sort((a, b) => b.roas! - a.roas!);
     const best = sorted[0];
     return `${best.provider.toUpperCase()} shows the highest observed ROAS (${best.roas}x) in this period. This is an observed metric, not a recommendation; budget scenarios live in the OR engine below.`;
   }
@@ -895,6 +921,7 @@ export class DashboardFeatureComponent implements OnInit {
 
   formatMetricValue(item: TimelineItem): string {
     const metric = this.selectedMetric();
+    if(item[metric]===null)return 'Unknown';
     switch (metric) {
       case 'spend': return `${item.spend.toFixed(2)} ${this.reportingCurrency()}`;
       case 'roas': return `${item.roas}x`;
@@ -905,7 +932,7 @@ export class DashboardFeatureComponent implements OnInit {
 
   onChartMouseMove(e: MouseEvent): void {
     const list = this.timeline();
-    if (list.length === 0) return;
+    if (list.length === 0 || list.some(t=>t[this.selectedMetric()]===null)) {this.hoverPoint.set(null);return;}
 
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
@@ -931,7 +958,7 @@ export class DashboardFeatureComponent implements OnInit {
 
   chartCurvePath(): string {
     const list = this.timeline();
-    if (list.length === 0) return '';
+    if (list.length === 0 || list.some(t=>t[this.selectedMetric()]===null)) return '';
 
     const maxVal = Math.max(...list.map(t => this.getVal(t)), 1);
     const stepX = 600 / Math.max(list.length - 1, 1);

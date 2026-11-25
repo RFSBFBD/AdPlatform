@@ -24,7 +24,7 @@ final class ChannelParameterDto
         if ($spend <= 0.0) {
             return 0.0;
         }
-        return $this->alpha * (1.0 - exp(-$this->beta * $spend));
+        return $this->alpha * (-expm1(-$this->beta * $spend));
     }
 
     /**

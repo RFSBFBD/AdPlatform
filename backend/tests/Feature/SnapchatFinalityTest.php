@@ -10,7 +10,7 @@ use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
-/** Snap metrics are final 48h after the end of the day in the ACCOUNT timezone (measurement docs). */
+/** Legacy age-cutoff tests only. This is not conversion finality or source qualification. */
 class SnapchatFinalityTest extends TestCase
 {
     use DatabaseTransactions;
@@ -54,19 +54,20 @@ class SnapchatFinalityTest extends TestCase
         [$u, $a] = $this->setup2('UTC');
         // Final up to 2026-11-19. Yesterday (11-21) and 11-20 are not final.
         foreach (['2026-11-19' => 10, '2026-11-20' => 99, '2026-11-21' => 99] as $d => $sp) {
-            PerformanceMetric::create(['connected_ad_account_id' => $a->id, 'provider' => 'snapchat', 'date' => $d, 'spend' => $sp, 'impressions' => 1, 'clicks' => 1, 'conversions' => 1, 'conversion_value' => 30, 'currency' => 'USD']);
+            PerformanceMetric::create(['metadata'=>['outcome_contract'=>['version'=>'source-outcomes-1','provider'=>$a->provider,'count_metric'=>'synthetic-purchase','value_metric'=>'synthetic-purchase-value','attribution_basis'=>'synthetic-only','value_truth'=>'provider_reported_not_verified_sales','cross_source_equivalence'=>false],'normalization_version'=>'strict-operands-1','account_metadata_source'=>'provider-discovery-explicit-1','metric_definition'=>['version'=>'meta-pixel-purchase-1','normalization'=>'strict-meta-operands-1','account_metadata_source'=>'meta-discovery-explicit-1','conversion'=>'offsite_conversion.fb_pixel_purchase','value'=>'offsite_conversion.fb_pixel_purchase']],'connected_ad_account_id' => $a->id, 'provider' => 'snapchat', 'date' => $d, 'spend' => $sp, 'impressions' => 1, 'clicks' => 1, 'conversions' => 1, 'conversion_value' => 30, 'currency' => 'USD']);
         }
         $r = (new S())->optimizeForUser($u->id, []);
         $win = $r->gates['window'] ?? null;
-        $this->assertNotNull($win);
-        $this->assertSame('2026-11-19', $win['end']);
+        $this->assertNull($win);
+        $this->assertNotSame('ok', $r->status);
+        $this->assertSame([], $r->channelAllocations);
     }
 
     public function test_only_non_final_days_means_no_window_and_no_numbers(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-11-22 12:00:00', 'UTC'));
         [$u, $a] = $this->setup2('UTC');
-        PerformanceMetric::create(['connected_ad_account_id' => $a->id, 'provider' => 'snapchat', 'date' => '2026-11-21', 'spend' => 50, 'impressions' => 1, 'clicks' => 1, 'conversions' => 1, 'conversion_value' => 90, 'currency' => 'USD']);
+        PerformanceMetric::create(['metadata'=>['outcome_contract'=>['version'=>'source-outcomes-1','provider'=>$a->provider,'count_metric'=>'synthetic-purchase','value_metric'=>'synthetic-purchase-value','attribution_basis'=>'synthetic-only','value_truth'=>'provider_reported_not_verified_sales','cross_source_equivalence'=>false],'normalization_version'=>'strict-operands-1','account_metadata_source'=>'provider-discovery-explicit-1','metric_definition'=>['version'=>'meta-pixel-purchase-1','normalization'=>'strict-meta-operands-1','account_metadata_source'=>'meta-discovery-explicit-1','conversion'=>'offsite_conversion.fb_pixel_purchase','value'=>'offsite_conversion.fb_pixel_purchase']],'connected_ad_account_id' => $a->id, 'provider' => 'snapchat', 'date' => '2026-11-21', 'spend' => 50, 'impressions' => 1, 'clicks' => 1, 'conversions' => 1, 'conversion_value' => 90, 'currency' => 'USD']);
         $r = (new S())->optimizeForUser($u->id, ['budget' => 1000, 'budget_horizon' => 'per_30_days', 'saturation_multiplier' => 2.5]);
         $this->assertNotSame('ok', $r->status);
         $this->assertSame([], $r->channelAllocations);
@@ -77,7 +78,7 @@ class SnapchatFinalityTest extends TestCase
         Carbon::setTestNow(Carbon::parse('2026-11-22 12:00:00', 'UTC'));
         $u = User::create(['name' => 'F', 'email' => 'fin_' . uniqid() . '@example.com', 'password' => bcrypt('x-test-only-1'), 'status' => 'active']);
         $m = ConnectedAdAccount::create(['user_id' => $u->id, 'provider' => 'meta', 'external_account_id' => 'm' . uniqid(), 'account_name' => 'M', 'currency' => 'USD', 'timezone' => 'UTC', 'access_token' => 't', 'status' => 'active']);
-        PerformanceMetric::create(['connected_ad_account_id' => $m->id, 'provider' => 'meta', 'date' => '2026-11-21', 'spend' => 5, 'impressions' => 1, 'clicks' => 1, 'conversions' => 1, 'conversion_value' => 9, 'currency' => 'USD']);
+        PerformanceMetric::create(['metadata'=>['outcome_contract'=>['version'=>'source-outcomes-1','provider'=>'meta','count_metric'=>'synthetic-purchase','value_metric'=>'synthetic-purchase-value','attribution_basis'=>'synthetic-only','value_truth'=>'provider_reported_not_verified_sales','cross_source_equivalence'=>false],'normalization_version'=>'strict-operands-1','account_metadata_source'=>'provider-discovery-explicit-1','metric_definition'=>['version'=>'meta-pixel-purchase-1','normalization'=>'strict-meta-operands-1','account_metadata_source'=>'meta-discovery-explicit-1','conversion'=>'offsite_conversion.fb_pixel_purchase','value'=>'offsite_conversion.fb_pixel_purchase']],'connected_ad_account_id' => $m->id, 'provider' => 'meta', 'date' => '2026-11-21', 'spend' => 5, 'impressions' => 1, 'clicks' => 1, 'conversions' => 1, 'conversion_value' => 9, 'currency' => 'USD']);
         $r = (new S())->optimizeForUser($u->id, []);
         $this->assertSame('2026-11-21', $r->gates['window']['end']);
     }

@@ -1,0 +1,7 @@
+import {TestBed} from '@angular/core/testing';
+import {FrozenCoverageComponent} from './frozen-coverage.component';
+describe('supplied calendar is not provider inventory',()=>{
+ beforeEach(()=>TestBed.configureTestingModule({imports:[FrozenCoverageComponent]}));
+ it('withholds another snapshots audit',()=>{const f=TestBed.createComponent(FrozenCoverageComponent);f.componentRef.setInput('snapshot','s');f.componentRef.setInput('coverage',{snapshot_id:'other',status:'audited_supplied_calendar_only'});f.detectChanges();expect(f.nativeElement.querySelector('table')).toBeNull();expect(f.nativeElement.textContent).toContain('No omitted contribution assumed zero');});
+ it('shows missing days separately from null operands with unknown inventory',()=>{const f=TestBed.createComponent(FrozenCoverageComponent);f.componentRef.setInput('snapshot','s');f.componentRef.setInput('coverage',{snapshot_id:'s',status:'audited_supplied_calendar_only',returned_cells:4,expected_cells_within_supplied_entities:5,missing_cells_within_supplied_entities:1,supplied_grid_complete:false,entities:{a:{returned_days:4,declared_window_days:5,missing_entity_days:1,missing_day_examples:['2026-11-03'],missing_operands_within_returned_rows:{conversions:4}}}});f.detectChanges();const t=f.nativeElement.textContent;expect(t).toContain('2026-11-03');expect(t).toContain('unknown, not inferred');expect(t).toContain('false');expect(t).toContain('conversions');});
+});

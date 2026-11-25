@@ -6,9 +6,11 @@ use App\Exceptions\OAuthTokenExpiredException;
 use App\Exceptions\ProviderRateLimitException;
 use App\Models\ConnectedAdAccount;
 use App\Models\ProviderDeveloperConfig;
+use App\Services\Advertising\AccountMetadataEvidence;
 use App\Services\Advertising\Contracts\AdvertisingProviderInterface;
+use App\Services\Advertising\FetchBoundary;
+use App\Services\Advertising\MetricOperand;
 use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -18,12 +20,13 @@ use Throwable;
 class GoogleAdsAdapter implements AdvertisingProviderInterface
 {
     protected ?ProviderDeveloperConfig $config;
-    protected string $apiVersion = 'v18';
+
+    protected string $apiVersion = 'v26';
 
     public function __construct(?ProviderDeveloperConfig $config = null)
     {
         $this->config = $config ?? ProviderDeveloperConfig::where('provider', 'google')->first();
-        if ($this->config && !empty($this->config->api_version)) {
+        if ($this->config && ! empty($this->config->api_version)) {
             $this->apiVersion = $this->config->api_version;
         }
     }
@@ -55,7 +58,7 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
         $this->ensureConfigured();
 
         $response = $this->executeHttp(function () use ($code, $redirectUri) {
-            return Http::timeout(30)->connectTimeout(10)
+            return Http::withoutRedirecting()->timeout(30)->connectTimeout(10)
                 ->asForm()
                 ->post('https://oauth2.googleapis.com/token', [
                     'client_id' => $this->config->app_id,
@@ -67,7 +70,7 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
         }, 'oauth2.googleapis.com/token');
 
         if ($response->failed()) {
-            throw new RuntimeException("Google OAuth exchange failed: " . $response->body());
+            throw new RuntimeException('Google OAuth exchange failed: '.$response->body());
         }
 
         $data = $response->json();
@@ -88,42 +91,48 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
         ];
 
         $response = $this->executeHttp(function () use ($accessToken, $headers) {
-            return Http::timeout(30)->connectTimeout(10)
+            return Http::withoutRedirecting()->timeout(30)->connectTimeout(10)
                 ->withToken($accessToken)
                 ->withHeaders($headers)
                 ->get("https://googleads.googleapis.com/{$this->apiVersion}/customers:listAccessibleCustomers");
-        }, "customers:listAccessibleCustomers");
+        }, 'customers:listAccessibleCustomers');
 
         if ($response->failed()) {
-            throw new RuntimeException("Failed to discover Google Ads customers: " . $response->body());
+            throw new RuntimeException('Failed to discover Google Ads customers: '.$response->body());
         }
 
-        $customerResourceNames = $response->json('resourceNames', []);
+        $customerResourceNames = $response->json('resourceNames');
+        if (! is_array($customerResourceNames) || ! array_is_list($customerResourceNames)) {
+            throw new RuntimeException('Google discovery requires explicit resource names.');
+        }$seenAccounts = [];
         $accounts = [];
 
         foreach ($customerResourceNames as $resourceName) {
+            if (! is_string($resourceName) || ! preg_match('~^customers/[0-9]+$~D', $resourceName)) {
+                throw new RuntimeException('Google customer resource malformed.');
+            }FetchBoundary::unique($seenAccounts, $resourceName, 'Google discovery');
             $customerId = str_replace('customers/', '', $resourceName);
             $cleanId = str_replace('-', '', $customerId);
 
-            $currency = 'USD';
-            $timezone = 'UTC';
+            $currency = null;
+            $timezone = null;
             $accountName = "Google Ads Customer ({$customerId})";
             $status = 'ACCESSIBLE';
 
             // Discover native customer currency and timezone via search query (Phase 3)
             try {
                 $detailResponse = $this->executeHttp(function () use ($accessToken, $headers, $cleanId) {
-                    return Http::timeout(30)->connectTimeout(10)
+                    return Http::withoutRedirecting()->timeout(30)->connectTimeout(10)
                         ->withToken($accessToken)
                         ->withHeaders($headers)
                         ->post("https://googleads.googleapis.com/{$this->apiVersion}/customers/{$cleanId}/googleAds:search", [
-                            'query' => "SELECT customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone, customer.status FROM customer LIMIT 1",
+                            'query' => 'SELECT customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone, customer.status FROM customer LIMIT 1',
                         ]);
                 }, "customers/{$cleanId}/googleAds:search");
 
                 if ($detailResponse->successful()) {
                     $results = $detailResponse->json('results', []);
-                    if (!empty($results[0]['customer'])) {
+                    if (! empty($results[0]['customer'])) {
                         $cust = $results[0]['customer'];
                         $currency = $cust['currencyCode'] ?? $currency;
                         $timezone = $cust['timeZone'] ?? $timezone;
@@ -133,15 +142,16 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
                 }
             } catch (Throwable $e) {
                 // Non-fatal if detail lookup for individual customer fails; fall back safely
-                Log::debug("Could not fetch detailed metadata for Google Ads customer {$customerId}: " . $e->getMessage());
+                Log::debug("Could not fetch detailed metadata for Google Ads customer {$customerId}: ".$e->getMessage());
             }
 
             $accounts[] = [
                 'provider' => 'google',
                 'external_account_id' => $customerId,
                 'account_name' => $accountName,
-                'currency' => $currency,
-                'timezone' => $timezone,
+                'currency' => is_string($currency) && preg_match('/^[A-Z]{3}$/D', $currency) ? $currency : null,
+                'timezone' => is_string($timezone) && in_array($timezone, \DateTimeZone::listIdentifiers(), true) ? $timezone : null,
+                'metadata_source' => ['version' => AccountMetadataEvidence::VERSION, 'currency' => $currency, 'timezone' => $timezone],
                 'raw_status' => $status,
             ];
         }
@@ -154,7 +164,7 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
         $this->ensureConfigured();
 
         $response = $this->executeHttp(function () use ($refreshToken) {
-            return Http::timeout(30)->connectTimeout(10)
+            return Http::withoutRedirecting()->timeout(30)->connectTimeout(10)
                 ->asForm()
                 ->post('https://oauth2.googleapis.com/token', [
                     'client_id' => $this->config->app_id,
@@ -165,7 +175,7 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
         }, 'oauth2.googleapis.com/token:refresh');
 
         if ($response->failed()) {
-            throw new OAuthTokenExpiredException("Failed to refresh Google access token: " . $response->body(), 'google');
+            throw new OAuthTokenExpiredException('Failed to refresh Google access token: '.$response->body(), 'google');
         }
 
         $data = $response->json();
@@ -189,94 +199,99 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
         // 1. Fetch Ad Groups & Ads hierarchy with complete pagination
         $adHierarchy = [];
         $agPageToken = null;
+        $agTokens = [];
+        $agPages = 0;
+        $seenAds = [];
+        $hierarchyRaw = [];
+        $groupParents = [];
         do {
-            try {
-                $payload = [
-                    'query' => "SELECT campaign.id, ad_group.id, ad_group.name, ad_group.status, ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.status FROM ad_group_ad",
-                    'pageSize' => 1000,
-                ];
-                if ($agPageToken) {
-                    $payload['pageToken'] = $agPageToken;
+            $payload = [
+                'query' => 'SELECT campaign.id, ad_group.id, ad_group.name, ad_group.status, ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.status FROM ad_group_ad',
+            ];
+            if ($agPageToken !== null) {
+                $payload['pageToken'] = $agPageToken;
+            }
+
+            $adResponse = $this->executeWithTokenHandling($account, function () use ($headers, $customerId, $payload) {
+                return Http::withoutRedirecting()->timeout(30)->connectTimeout(10)
+                    ->withHeaders($headers)
+                    ->post("https://googleads.googleapis.com/{$this->apiVersion}/customers/{$customerId}/googleAds:search", $payload);
+            }, "customers/{$customerId}/googleAds:search:ad_group_ad");
+
+            if (! $adResponse->successful()) {
+                throw new RuntimeException('Google hierarchy fetch failed; no partial hierarchy.');
+            }
+            $adData = $adResponse->json();
+            $hierarchyRaw[] = $adData;
+            [$rows,$agPageToken] = FetchBoundary::google($adData, $agTokens, $agPages);
+
+            foreach ($rows as $row) {
+                $campId = FetchBoundary::id($row['campaign']['id'] ?? null, 'Google campaign');
+                $agId = FetchBoundary::id($row['adGroup']['id'] ?? null, 'Google ad group');
+                $adId = FetchBoundary::id($row['adGroupAd']['ad']['id'] ?? null, 'Google ad');
+                FetchBoundary::unique($seenAds, $adId, 'Google hierarchy ad');
+                if (isset($groupParents[$agId]) && $groupParents[$agId] !== $campId) {
+                    throw new RuntimeException('Google ad group parent conflicts.');
                 }
+                $groupParents[$agId] = $campId;
 
-                $adResponse = $this->executeWithTokenHandling($account, function () use ($headers, $customerId, $payload) {
-                    return Http::timeout(30)->connectTimeout(10)
-                        ->withHeaders($headers)
-                        ->post("https://googleads.googleapis.com/{$this->apiVersion}/customers/{$customerId}/googleAds:search", $payload);
-                }, "customers/{$customerId}/googleAds:search:ad_group_ad");
-
-                if ($adResponse->successful()) {
-                    $adData = $adResponse->json();
-                    $rows = $adData['results'] ?? [];
-
-                    foreach ($rows as $row) {
-                        $campId = (string) ($row['campaign']['id'] ?? '');
-                        $agId = (string) ($row['adGroup']['id'] ?? '');
-                        $adId = (string) ($row['adGroupAd']['ad']['id'] ?? '');
-
-                        if ($campId && $agId) {
-                            if (!isset($adHierarchy[$campId][$agId])) {
-                                $adHierarchy[$campId][$agId] = [
-                                    'external_ad_set_id' => $agId,
-                                    'name' => $row['adGroup']['name'] ?? "Ad Group {$agId}",
-                                    'status' => strtoupper($row['adGroup']['status'] ?? 'ENABLED'),
-                                    'ads' => [],
-                                ];
-                            }
-
-                            if ($adId) {
-                                $adHierarchy[$campId][$agId]['ads'][] = [
-                                    'external_ad_id' => $adId,
-                                    'name' => $row['adGroupAd']['ad']['name'] ?? "Ad {$adId}",
-                                    'status' => strtoupper($row['adGroupAd']['status'] ?? 'ENABLED'),
-                                ];
-                            }
-                        }
+                if ($campId && $agId) {
+                    if (! isset($adHierarchy[$campId][$agId])) {
+                        $adHierarchy[$campId][$agId] = [
+                            'external_ad_set_id' => $agId,
+                            'name' => $row['adGroup']['name'] ?? "Ad Group {$agId}",
+                            'status' => strtoupper($row['adGroup']['status'] ?? 'ENABLED'),
+                            'ads' => [],
+                        ];
                     }
 
-                    $agPageToken = !empty($adData['nextPageToken']) ? $adData['nextPageToken'] : null;
-                } else {
-                    $agPageToken = null;
+                    if ($adId) {
+                        $adHierarchy[$campId][$agId]['ads'][] = [
+                            'external_ad_id' => $adId,
+                            'name' => $row['adGroupAd']['ad']['name'] ?? "Ad {$adId}",
+                            'status' => strtoupper($row['adGroupAd']['status'] ?? 'ENABLED'),
+                        ];
+                    }
                 }
-            } catch (Throwable $e) {
-                // Secondary hierarchy query error shouldn't halt campaign sync
-                $agPageToken = null;
             }
+
         } while ($agPageToken !== null);
 
         // 2. Fetch Campaigns with complete pagination
         $campaigns = [];
         $rawResponses = [];
         $nextPageToken = null;
+        $tokens = [];
+        $pages = 0;
+        $seen = [];
 
         do {
             $payload = [
-                'query' => "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type FROM campaign ORDER BY campaign.id",
-                'pageSize' => 500,
+                'query' => 'SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type FROM campaign ORDER BY campaign.id',
             ];
-            if ($nextPageToken) {
+            if ($nextPageToken !== null) {
                 $payload['pageToken'] = $nextPageToken;
             }
 
             $response = $this->executeWithTokenHandling($account, function () use ($headers, $customerId, $payload) {
-                return Http::timeout(30)->connectTimeout(10)
+                return Http::withoutRedirecting()->timeout(30)->connectTimeout(10)
                     ->withHeaders($headers)
                     ->post("https://googleads.googleapis.com/{$this->apiVersion}/customers/{$customerId}/googleAds:search", $payload);
             }, "customers/{$customerId}/googleAds:search:campaign");
 
             if ($response->failed()) {
-                throw new RuntimeException("Failed to fetch Google campaigns: " . $response->body());
+                throw new RuntimeException('Failed to fetch Google campaigns: '.$response->body());
             }
 
             $data = $response->json();
             $rawResponses[] = $data;
 
-            // Handle either search response format or searchStream batch format
-            $results = $data['results'] ?? (is_array($data) && isset($data[0]['results']) ? $data[0]['results'] : []);
+            [$results,$nextPageToken] = FetchBoundary::google($data, $tokens, $pages);
 
             foreach ($results as $row) {
                 $c = $row['campaign'] ?? [];
-                $campId = (string) ($c['id'] ?? '');
+                $campId = FetchBoundary::id($c['id'] ?? null, 'Google campaign');
+                FetchBoundary::unique($seen, $campId, 'Google campaign');
 
                 $adSets = [];
                 if (isset($adHierarchy[$campId])) {
@@ -290,7 +305,7 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
                     'objective' => $c['advertisingChannelType'] ?? null,
                     'daily_budget' => null,
                     'lifetime_budget' => null,
-                    'currency' => $account->currency ?? 'USD',
+                    'currency' => $account->currency,
                     'start_date' => null,
                     'end_date' => null,
                     'metadata' => $c,
@@ -298,12 +313,18 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
                 ];
             }
 
-            $nextPageToken = !empty($data['nextPageToken']) ? $data['nextPageToken'] : null;
         } while ($nextPageToken !== null);
+
+        foreach (array_keys($adHierarchy) as $cid) {
+            if (! isset($seen[$cid])) {
+                throw new RuntimeException('Google hierarchy parent absent from campaign roster.');
+            }
+        }
 
         return [
             'endpoint' => "/customers/{$customerId}/googleAds:search",
-            'raw' => $rawResponses,
+            'raw' => ['campaign_pages' => $rawResponses, 'ad_group_ad_pages' => $hierarchyRaw],
+            'fetch_status' => 'complete_local_traversal_not_inventory_verified',
             'campaigns' => $campaigns,
         ];
     }
@@ -319,58 +340,80 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
 
         $metrics = [];
         $rawResponses = [];
+        $recordedPages = [];
+        $recordedBytes = 0;
         $nextPageToken = null;
+        $tokens = [];
+        $pages = 0;
+        $seen = [];
 
         do {
             $payload = [
                 'query' => "SELECT campaign.id, segments.date, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign WHERE segments.date BETWEEN '{$startDate}' AND '{$endDate}'",
-                'pageSize' => 1000,
             ];
-            if ($nextPageToken) {
+            if ($nextPageToken !== null) {
                 $payload['pageToken'] = $nextPageToken;
             }
 
             $response = $this->executeWithTokenHandling($account, function () use ($headers, $customerId, $payload) {
-                return Http::timeout(30)->connectTimeout(10)
+                return Http::withoutRedirecting()->timeout(30)->connectTimeout(10)
                     ->withHeaders($headers)
                     ->post("https://googleads.googleapis.com/{$this->apiVersion}/customers/{$customerId}/googleAds:search", $payload);
             }, "customers/{$customerId}/googleAds:search:insights");
 
             if ($response->failed()) {
-                throw new RuntimeException("Failed to fetch Google insights: " . $response->body());
+                throw new RuntimeException('Failed to fetch Google insights: '.$response->body());
             }
 
+            // Capture original reporting bytes before Laravel JSON decoding or MetricOperand float conversion.
+            // Capture is evidence only, not a qualified exact metric/import contract.
+            $body = $response->body();
+            $recordedBytes+=strlen($body);
+            if($recordedBytes>16*1024*1024||strlen($body)>8*1024*1024){throw new RuntimeException('Google original reporting page exceeds evidence capture limit; no partial import.');}
+            $recordedPages[] = ['body' => $body, 'sha256' => hash('sha256',$body),
+                'request' => ['endpoint' => "/customers/{$customerId}/googleAds:search", 'api_version' => $this->apiVersion,
+                    'query' => $payload['query'], 'page_token' => $payload['pageToken'] ?? null],
+                'account_external_id' => $account->external_account_id, 'currency' => $account->currency, 'timezone' => $account->timezone,
+                'start_date' => $startDate, 'end_date' => $endDate, 'retrieved_at' => now()->toIso8601String(),
+                'request_id' => $response->header('request-id'), 'status' => $response->status(),
+                'precision_state' => 'original_body_retained_not_yet_qualified'];
             $data = $response->json();
             $rawResponses[] = $data;
 
-            $results = $data['results'] ?? (is_array($data) && isset($data[0]['results']) ? $data[0]['results'] : []);
+            [$results,$nextPageToken] = FetchBoundary::google($data, $tokens, $pages);
 
             foreach ($results as $row) {
                 $c = $row['campaign'] ?? [];
                 $m = $row['metrics'] ?? [];
                 $s = $row['segments'] ?? [];
+                $id = FetchBoundary::id($c['id'] ?? null, 'Google metric campaign');
+                $date = $s['date'] ?? null;
+                if (! is_string($date)) {
+                    throw new RuntimeException('Google metric date missing.');
+                }FetchBoundary::unique($seen, $id.'|'.$date, 'Google metric');
 
-                $spend = isset($m['costMicros']) ? ((float) $m['costMicros']) / 1000000.0 : 0.0;
+                $spend = MetricOperand::read($m, 'costMicros', false, 1000000);
 
                 $metrics[] = [
-                    'external_campaign_id' => (string) ($c['id'] ?? ''),
+                    'external_campaign_id' => $id,
                     'external_ad_set_id' => null,
                     'external_ad_id' => null,
-                    'date' => $s['date'] ?? $startDate,
+                    'date' => $s['date'] ?? null,
                     'spend' => $spend,
-                    'impressions' => (int) ($m['impressions'] ?? 0),
-                    'clicks' => (int) ($m['clicks'] ?? 0),
-                    'conversions' => (float) ($m['conversions'] ?? 0),
-                    'conversion_value' => (float) ($m['conversionsValue'] ?? 0),
+                    'impressions' => MetricOperand::read($m, 'impressions', true),
+                    'clicks' => MetricOperand::read($m, 'clicks', true),
+                    'conversions' => MetricOperand::read($m, 'conversions'),
+                    'conversion_value' => MetricOperand::read($m, 'conversionsValue'),
                 ];
             }
 
-            $nextPageToken = !empty($data['nextPageToken']) ? $data['nextPageToken'] : null;
         } while ($nextPageToken !== null);
 
         return [
             'endpoint' => "/customers/{$customerId}/googleAds:search/insights",
             'raw' => $rawResponses,
+            'recorded_response_pages' => $recordedPages,
+            'fetch_status' => 'complete_local_traversal_not_inventory_verified',
             'metrics' => $metrics,
         ];
     }
@@ -382,7 +425,7 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
     {
         $response = $this->executeHttp($callback, $endpoint);
 
-        if ($response->status() === 401 && !empty($account->refresh_token)) {
+        if ($response->status() === 401 && ! empty($account->refresh_token)) {
             Log::info("Google access token expired for account #{$account->id}. Attempting automatic refresh...");
             try {
                 $refreshed = $this->refreshToken($account->refresh_token);
@@ -394,7 +437,7 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
                 $response = $this->executeHttp($callback, $endpoint);
             } catch (Throwable $refreshEx) {
                 $account->update(['status' => 'token_expired']);
-                throw new OAuthTokenExpiredException("Google OAuth token expired and auto-refresh failed: " . $refreshEx->getMessage(), 'google', $account->id);
+                throw new OAuthTokenExpiredException('Google OAuth token expired and auto-refresh failed: '.$refreshEx->getMessage(), 'google', $account->id);
             }
         } elseif ($response->status() === 401 || $response->status() === 403) {
             $account->update(['status' => 'token_expired']);
@@ -426,23 +469,25 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
                             'endpoint' => $endpoint,
                             'duration_ms' => round((microtime(true) - $start) * 1000, 2),
                         ]);
-                        throw new ProviderRateLimitException("Google Ads rate limit reached.", 'google');
+                        throw new ProviderRateLimitException('Google Ads rate limit reached.', 'google');
                     }
                     usleep($delayMs * 1000);
                     $delayMs *= 2;
+
                     continue;
                 }
 
                 if ($response->serverError() && $attempts < $maxAttempts) {
                     usleep($delayMs * 1000);
                     $delayMs *= 2;
+
                     continue;
                 }
 
                 return $response;
             } catch (ConnectionException $e) {
                 if ($attempts >= $maxAttempts) {
-                    Log::error("Google Ads network connection error", [
+                    Log::error('Google Ads network connection error', [
                         'endpoint' => $endpoint,
                         'error' => $e->getMessage(),
                     ]);
@@ -456,8 +501,8 @@ class GoogleAdsAdapter implements AdvertisingProviderInterface
 
     protected function ensureConfigured(): void
     {
-        if (!$this->config || empty($this->config->app_id) || empty($this->config->app_secret)) {
-            throw new RuntimeException("Google Ads API credentials have not been configured.");
+        if (! $this->config || empty($this->config->app_id) || empty($this->config->app_secret)) {
+            throw new RuntimeException('Google Ads API credentials have not been configured.');
         }
     }
 }

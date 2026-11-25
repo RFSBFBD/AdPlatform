@@ -1,3 +1,4 @@
+import { SyncProvenance, provenanceLine } from './data-coverage';
 import { parseOAuthCallback, OAUTH_PROVIDER_KEY } from './oauth-callback';
 import { ProviderSetupGuideComponent } from './provider-setup-guide.component';
 import { ProviderAppConfigComponent, ProviderConfigDto, ProviderId, createDefaultConfig } from './provider-app-config.component';
@@ -16,12 +17,13 @@ import { AuthService } from '../../core/services/auth.service';
 export interface ConnectedAccountDto {
   id: number;
   uuid: string;
-  provider: 'meta' | 'google' | 'tiktok' | 'snapchat';
+  provider: 'meta' | 'google' | 'tiktok' | 'snapchat' | 'taboola' | 'pinterest' | 'reddit' | 'spotify' | 'microsoft' | 'linkedin' | 'apple' | 'amazon' | 'x';
   external_account_id: string;
   account_name: string;
   currency: string;
   timezone: string;
   status: 'active' | 'expired' | 'revoked' | 'error' | 'rate_limited';
+  sync_provenance?:SyncProvenance;
   last_synced_at: string | null;
   created_at: string;
 }
@@ -45,7 +47,7 @@ export interface SyncRunDto {
       <div class="page-header">
         <div>
           <h2 class="title">Integrations &amp; Connected Accounts</h2>
-          <p class="subtitle">One journey per platform: Step 1 stores this platform's developer app credentials (admin only, once per platform); Step 2 connects an ad account with OAuth. Ad data always comes from the connected account's own access, never from Step 1. Meta, Google and TikTok connection code exists and has not been run against live accounts; Snapchat reports at account level only, also not run live.</p>
+          <p class="subtitle">Step 1 stores the developer app credentials (admin only); Step 2 authorizes and selects an ad account. Taboola and Apple use shared client credentials instead of browser OAuth and is admin-only. Every adapter is code/fixture-tested only, not verified against a live advertising account. New providers currently report at account/day scope; each card lists its limits.</p>
         </div>
       </div>
 
@@ -170,7 +172,7 @@ export interface SyncRunDto {
                   <th>Account ID</th>
                   <th>Currency & Timezone</th>
                   <th>Status</th>
-                  <th>Last Synced</th>
+                  <th>Sync evidence</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -187,25 +189,31 @@ export interface SyncRunDto {
                     <td class="mono-text">{{ acc.external_account_id }}</td>
                     <td>{{ acc.currency }} / {{ acc.timezone }}</td>
                     <td>
-                      <app-badge [variant]="acc.status === 'active' ? 'success' : (acc.status === 'rate_limited' ? 'warning' : 'danger')">
+                      <app-badge [variant]="['active','connected'].includes(acc.status) ? 'success' : (acc.status === 'rate_limited' ? 'warning' : 'danger')">
                         {{ acc.status | uppercase }}
                       </app-badge>
                     </td>
-                    <td>{{ acc.last_synced_at ? (acc.last_synced_at | date:'medium') : 'Pending initial sync' }}</td>
+                    <td class="sync-evidence">{{ syncEvidence(acc) }}</td>
                     <td>
                       <div class="action-buttons">
                         <app-button 
                           variant="primary" 
                           size="sm" 
                           [loading]="syncingAccountId() === acc.id"
+                          [disabled]="['apple','x'].includes(acc.provider)"
                           (clicked)="triggerDynamicSync(acc)"
                         >
                           <app-icon name="sync" [size]="14"></app-icon>
-                          <span>Sync Now</span>
+                          <span>{{ ['apple','x'].includes(acc.provider) ? 'Revenue sync unavailable' : (['microsoft','amazon'].includes(acc.provider) ? 'Request async report' : 'Sync Now') }}</span>
                         </app-button>
-                        <app-button 
-                          variant="outline" 
-                          size="sm" 
+                        @if (['microsoft','amazon'].includes(acc.provider)) { <app-button variant="outline" size="sm" (clicked)="viewAsyncReport(acc)">Report status</app-button> }
+                        @if (acc.provider === 'x') { <app-button variant="outline" size="sm" (clicked)="viewXDelivery(acc)">7-day delivery</app-button> }
+                        @if (acc.provider === 'apple') {
+                          <app-button variant="outline" size="sm" (clicked)="viewAppleDelivery(acc)">Delivery report</app-button>
+                        }
+                        <app-button
+                          variant="outline"
+                          size="sm"
                           (clicked)="viewHistory(acc)"
                         >
                           History
@@ -247,7 +255,7 @@ export interface SyncRunDto {
           <app-button variant="primary" [loading]="isConnecting()" (clicked)="connectSelected()">Connect selected</app-button>
         </section>
       }
-      <p class="x-note" style="font-size:13px;opacity:.8">X (Twitter) Ads is not supported yet: no adapter exists and it needs approved X Ads API access. It is not connected and no X data is shown.</p>
+      <p class="x-note" style="font-size:13px;opacity:.8">X Ads supports a separate OAuth1 campaign-delivery reader, not purchase revenue or OR sync. Every adapter remains fixture-tested only until verified with an approved live account. Walmart Connect remains blocked on the partner signing and token contract.</p>
 
       <app-modal 
         [isOpen]="isSyncModalOpen()" 
@@ -359,6 +367,7 @@ export interface SyncRunDto {
     </div>
   `,
   styles: [`
+    .accounts-table td.sync-evidence { max-width:280px; min-width:180px; white-space:normal; overflow-wrap:anywhere; font-size:.8rem; }
     .accounts-page {
       display: flex;
       flex-direction: column;
@@ -839,6 +848,8 @@ export interface SyncRunDto {
   `]
 })
 export class AccountsFeatureComponent implements OnInit, OnDestroy {
+  syncEvidence=(a:ConnectedAccountDto)=>a.sync_provenance?provenanceLine(a.sync_provenance):'Sync audit unavailable';
+
   private readonly http = inject(HttpClient);
 
   readonly accounts = signal<ConnectedAccountDto[]>([]);
@@ -889,6 +900,15 @@ export class AccountsFeatureComponent implements OnInit, OnDestroy {
     google: createDefaultConfig('google'),
     tiktok: createDefaultConfig('tiktok'),
     snapchat: createDefaultConfig('snapchat'),
+    taboola: createDefaultConfig('taboola'),
+    pinterest: createDefaultConfig('pinterest'),
+    reddit: createDefaultConfig('reddit'),
+    spotify: createDefaultConfig('spotify'),
+    linkedin: createDefaultConfig('linkedin'),
+    microsoft: createDefaultConfig('microsoft'),
+    apple: createDefaultConfig('apple'),
+    amazon: createDefaultConfig('amazon'),
+    x: createDefaultConfig('x'),
   };
 
   readonly providers: { id: ProviderId; name: string; type: string; desc: string; iconSize: number }[] = [
@@ -896,6 +916,15 @@ export class AccountsFeatureComponent implements OnInit, OnDestroy {
     { id: 'google', name: 'Google Ads', type: 'Search, YouTube, Display', desc: 'Connect customer accounts or MCC managers via official Google Ads API.', iconSize: 28 },
     { id: 'tiktok', name: 'TikTok Ads', type: 'TikTok for Business', desc: 'Connect advertiser accounts via official TikTok Marketing API.', iconSize: 28 },
     { id: 'snapchat', name: 'Snapchat Ads', type: 'Snap Marketing API', desc: 'Connect Snap ad accounts through the official Snap Marketing API. Daily account-level spend, swipes and purchase value (Snap Pixel only).', iconSize: 22 },
+    { id:'x', name:'X Ads', type:'OAuth1 · campaign delivery only', desc:'Fixture-tested, not live. Approved Ads API access and consumer credentials required. Signed OAuth1 user flow; seven completed local days, BILLING/ENGAGEMENT on X only. No purchase revenue import, async history or off-platform placement.', iconSize:22 },
+    { id: 'amazon', name: 'Amazon Ads', type: 'Sponsored Products · v3 asynchronous reports', desc: 'Fixture-tested, not live. Profile-local campaign/day data aggregated to account/day. Explicit 7-day click purchases and sales, not SB/SD/DSP. Durable queue, verified download host and endDate boundary policy required. v3 migration needed before June 30, 2027.', iconSize: 22 },
+    { id: 'apple', name: 'Apple Ads', type: 'Platform API v1 · delivery only', desc: 'Fixture-tested, not live. Admin client grant with pre-signed ES256 JWT. Separate campaign/day delivery API for taps and installs, no purchase revenue. Standard Sync intentionally disabled.', iconSize: 22 },
+    { id: 'microsoft', name: 'Microsoft Advertising', type: 'REST v13 · asynchronous account reports', desc: 'Fixture-tested, not live. Requires developer token, durable queue worker, verified timezone map and download-host allowlist in deployment. Reports submit/poll/download/import, never immediate success.', iconSize: 22 },
+    { id: 'linkedin', name: 'LinkedIn Ads', type: 'Versioned REST · guarded revenue mapping', desc: 'Auth and discovery implemented, fixture-tested only. Daily reports remain disabled until conversion rules and revenue values are verified in deployment configuration. App review and API version required.', iconSize: 22 },
+    { id: 'spotify', name: 'Spotify Ads', type: 'API v3 · account/day reports', desc: 'Fixture-tested, not verified live. UTC account reports in billing currency. Purchases/revenue require instrumentation; missing or privacy-suppressed metrics stop import.', iconSize: 22 },
+    { id: 'reddit', name: 'Reddit Ads', type: 'API v3 · account/day purchases', desc: 'Fixture-tested, not verified live. UTC daily account reports; purchase click + view conversions. Microcurrency spend and cents purchase value are normalized separately.', iconSize: 22 },
+    { id: 'pinterest', name: 'Pinterest Ads', type: 'API v5 · account/day reports', desc: 'Fixture-tested, not verified live. Advertiser-currency reporting, checkout event value, outbound clicks, 30-day click and engagement / 1-day view attribution. Missing fields stop import.', iconSize: 22 },
+    { id: 'taboola', name: 'Taboola Ads', type: 'Client credentials · account/day reports', desc: 'Adapter implemented and fixture-tested, not verified live. Admin credentials required. Account-level reporting only; conversions can change for 30 days.', iconSize: 22 },
   ];
 
   // Looker Studio connector (kept from the retired Developer API Hub page)
@@ -907,20 +936,20 @@ export class AccountsFeatureComponent implements OnInit, OnDestroy {
   isAppConfigured(id: ProviderId): boolean {
     const cfg = this.devConfigs[id];
     const base = !!cfg.app_id && cfg.has_secret;
-    return id === 'google' ? base && cfg.has_developer_token : base;
+    return ['google', 'microsoft'].includes(id) ? base && cfg.has_developer_token : base;
   }
 
   // Connect is gated only on a successfully loaded config state. A failed load
   // means "unknown", never "verified missing", so it must not block Step 2.
   isConnectDisabled(id: ProviderId): boolean {
-    return this.devConfigStatus() === 'loaded' && this.canManageDevelopers() && !this.isAppConfigured(id);
+    return (['taboola', 'apple'].includes(id) && !this.canManageDevelopers()) || (this.devConfigStatus() === 'loaded' && this.canManageDevelopers() && !this.isAppConfigured(id));
   }
 
   fetchDevConfigs(): void {
     this.devConfigStatus.set('loading');
     this.http.get<{ success: boolean; data: ProviderConfigDto[] }>('/api/v1/admin/developer-configs').subscribe({
       next: (res) => {
-        if (res?.success && Array.isArray(res.data) && this.providers.every(p => res.data.some(c => c.provider === p.id))) {
+        if (res?.success && Array.isArray(res.data) && ['meta', 'google', 'tiktok', 'snapchat'].every(p => res.data.some(c => c.provider === p))) {
           for (const item of res.data) {
             if (item.provider in this.devConfigs) {
               this.devConfigs[item.provider] = item;
@@ -980,11 +1009,14 @@ export class AccountsFeatureComponent implements OnInit, OnDestroy {
     }
     const redirectUri = window.location.origin + '/accounts';
     const qs = new URLSearchParams({ code: parsed.code, state: parsed.state, redirect_uri: redirectUri });
+    if(parsed.oauth_token) qs.set('oauth_token',parsed.oauth_token);
+    if(parsed.oauth_verifier) qs.set('oauth_verifier',parsed.oauth_verifier);
     this.http.get<{ success: boolean; data: { provider: string; accounts: any[] } }>(
       `/api/v1/integrations/oauth/${parsed.provider}/callback?${qs.toString()}`
     ).subscribe({
       next: (res) => {
         window.localStorage.removeItem(OAUTH_PROVIDER_KEY);
+        window.localStorage.removeItem('adplatform_x_oauth_state');
         if (res?.success && res.data?.accounts) {
           this.discovered.set({ provider: res.data.provider, accounts: res.data.accounts });
           this.selectedIds.set([]);
@@ -994,6 +1026,7 @@ export class AccountsFeatureComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         window.localStorage.removeItem(OAUTH_PROVIDER_KEY);
+        window.localStorage.removeItem('adplatform_x_oauth_state');
         this.showModal('Connection not completed', err.error?.error?.message || 'The authorization could not be completed.');
       }
     });
@@ -1047,17 +1080,52 @@ export class AccountsFeatureComponent implements OnInit, OnDestroy {
     });
   }
 
-  initiateConnect(provider: 'meta' | 'google' | 'tiktok' | 'snapchat'): void {
+  viewXDelivery(acc: ConnectedAccountDto): void {
+    if(!acc.timezone){this.showModal('X timezone missing','Reconnect with verified account-local timezone.');return;}
+    const parts=new Intl.DateTimeFormat('en-CA',{timeZone:acc.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+    const get=(key:string)=>parts.find(p=>p.type===key)?.value;
+    const end=new Date(`${get('year')}-${get('month')}-${get('day')}T00:00:00Z`);end.setUTCDate(end.getUTCDate()-1);
+    const start=new Date(end);start.setUTCDate(start.getUTCDate()-6);
+    this.http.get<any>(`/api/v1/ad-accounts/${acc.id}/x-delivery-report`,{params:{start_date:start.toISOString().slice(0,10),end_date:end.toISOString().slice(0,10)}}).subscribe({
+      next:r=>{const rows=r.data?.rows??[];this.showModal('X ACTUAL campaign delivery, not revenue',rows.length?rows.map((x:any)=>`${x.date} (${x.timezone}), ${x.campaign_id}: ${x.spend} ${x.currency}, ${x.impressions} impressions, ${x.aggregate_clicks} aggregate clicks. Revenue unavailable. Spend can restate.`).join('\n'):'No rows. Empty data does not verify permission or measured zero.');},
+      error:e=>this.showModal('X delivery unavailable',e.error?.message||'Check approved Ads access, local date range, funding currencies and rate limits.')
+    });
+  }
+
+  viewAppleDelivery(acc: ConnectedAccountDto): void {
+    const end = new Date(); end.setUTCDate(end.getUTCDate() - 1);
+    const start = new Date(end); start.setUTCDate(start.getUTCDate() - 29);
+    const start_date = start.toISOString().slice(0, 10), end_date = end.toISOString().slice(0, 10);
+    this.http.get<any>(`/api/v1/ad-accounts/${acc.id}/apple-delivery-report`, { params: {start_date, end_date} }).subscribe({
+      next: r => {
+        const rows = r.data?.rows ?? [];
+        this.modalTitle.set(`Apple delivery: ${start_date} to ${end_date} (UTC)`);
+        this.modalMessage.set(rows.length ? rows.map((x: any) => `${x.date}, campaign ${x.campaign_id}: ${x.spend} ${x.currency}, ${x.impressions} impressions, ${x.taps} taps, ${x.installs} installs. Revenue unavailable.`).join('\n') : 'No report rows. Empty results do not confirm live reporting permission.');
+        this.isModalOpen.set(true);
+      },
+      error: e => { this.modalTitle.set('Apple delivery unavailable'); this.modalMessage.set(e.error?.message || 'Report failed. Check access, JWT expiry and report permissions.'); this.isModalOpen.set(true); }
+    });
+  }
+
+  initiateConnect(provider: 'meta' | 'google' | 'tiktok' | 'snapchat' | 'taboola' | 'pinterest' | 'reddit' | 'spotify' | 'microsoft' | 'linkedin' | 'apple' | 'amazon' | 'x'): void {
     this.connectingProvider.set(provider);
+    if (provider === 'taboola' || provider === 'apple') {
+      this.http.post<{success: boolean; data: {provider: string; accounts: any[]}}>(`/api/v1/integrations/${provider}/credential-discovery`, {}).subscribe({
+        next: res => { this.connectingProvider.set(null); this.discovered.set(res.data); this.selectedIds.set([]); },
+        error: err => { this.connectingProvider.set(null); this.modalTitle.set(provider.toUpperCase() + ' account discovery'); this.modalMessage.set(err.error?.message || 'Discovery failed. Administrator credentials and API access are required.'); this.isModalOpen.set(true); }
+      });
+      return;
+    }
     window.localStorage.setItem(OAUTH_PROVIDER_KEY, provider);
     const redirectUri = window.location.origin + '/accounts';
 
-    this.http.get<{ success: boolean; data: { auth_url: string } }>(
+    this.http.get<{ success: boolean; data: { auth_url: string; state: string } }>(
       `/api/v1/integrations/oauth/${provider}/redirect?redirect_uri=${encodeURIComponent(redirectUri)}`
     ).subscribe({
       next: (res) => {
         this.connectingProvider.set(null);
         if (res.success && res.data.auth_url) {
+          if(provider==='x') window.localStorage.setItem('adplatform_x_oauth_state',res.data.state);
           window.open(res.data.auth_url, '_blank', 'width=600,height=700');
         }
       },
@@ -1071,7 +1139,27 @@ export class AccountsFeatureComponent implements OnInit, OnDestroy {
     });
   }
 
+  readonly microsoftReportIds: Record<number, number> = {};
+  submitAsyncReport(account: ConnectedAccountDto): void {
+    const tz=account.timezone;
+    if (!tz) { this.modalTitle.set('Profile timezone missing');this.modalMessage.set('Reconnect with a verified reporting timezone.');this.isModalOpen.set(true);return; }
+    const localDay = new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    const end=new Date(localDay+'T00:00:00Z');end.setUTCDate(end.getUTCDate()-1);
+    const start=new Date(end);start.setUTCDate(start.getUTCDate()-29);
+    this.http.post<any>(`/api/v1/ad-accounts/${account.id}/${account.provider}-reports`,{start_date:start.toISOString().slice(0,10),end_date:end.toISOString().slice(0,10)}).subscribe({
+      next:r=>{this.microsoftReportIds[account.id]=r.data.report_job_id;this.modalTitle.set('Report submitted, not imported');this.modalMessage.set('A durable server worker polls with delay. Use Report status to inspect completion. Submission is not a sync success.');this.isModalOpen.set(true);},
+      error:e=>{this.modalTitle.set('Report unavailable');this.modalMessage.set(e.error?.message || 'Check queue, date policy, timezone and provider setup.');this.isModalOpen.set(true);}
+    });
+  }
+  submitMicrosoftReport(account: ConnectedAccountDto): void {this.submitAsyncReport(account);}
+  viewMicrosoftReport(account: ConnectedAccountDto): void {this.viewAsyncReport(account);}
+  viewAsyncReport(account: ConnectedAccountDto): void {
+    const id=this.microsoftReportIds[account.id] || 'latest';
+    this.http.get<any>(`/api/v1/ad-accounts/${account.id}/${account.provider}-reports/${id}`).subscribe({next:r=>{this.microsoftReportIds[account.id]=r.data.report_job_id;this.modalTitle.set('Report status');this.modalMessage.set(`State: ${r.data.state}. Imported: ${r.data.imported}. ${r.data.error || ''}`);this.isModalOpen.set(true);this.fetchAccounts();},error:()=>{this.modalTitle.set('Report status unavailable');this.modalMessage.set('No accessible report found.');this.isModalOpen.set(true);}});
+  }
+
   triggerDynamicSync(account: ConnectedAccountDto): void {
+    if (['microsoft','amazon'].includes(account.provider)) { this.submitAsyncReport(account); return; }
     this.currentSyncAccount.set(account);
     this.syncingAccountId.set(account.id);
     this.isSyncModalOpen.set(true);

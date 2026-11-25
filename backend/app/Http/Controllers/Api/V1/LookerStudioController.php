@@ -45,6 +45,7 @@ class LookerStudioController extends Controller
         // Tenancy / User Scoping (SEC-POST-01) - indexed subquery
         $userId = $request->user()->id;
 
+        if($problem=(new \App\Services\Analytics\MetaDefinitionTransitionGuard)->userProblem($userId,$startDate,$endDate))return response()->json(['success'=>false,'message'=>$problem],409);
         $query = PerformanceMetric::query()
             ->join('connected_ad_accounts', 'performance_metrics.connected_ad_account_id', '=', 'connected_ad_accounts.id')
             ->leftJoin('campaigns', 'performance_metrics.campaign_id', '=', 'campaigns.id')

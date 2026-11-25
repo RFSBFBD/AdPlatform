@@ -24,6 +24,19 @@ class AiManager
     }
 
     /**
+     * Generic JSON completion for a caller that validates the reply itself (evidence claim selection).
+     * Returns null for placeholder keys: canned text is never returned as if it were an analysis.
+     */
+    public function completeJson(User $user, string $systemPrompt, string $userPrompt, string $action): ?array
+    {
+        $config = $this->getActiveConfig($user);
+        if ($this->usesFakeProvider($config)) {
+            return null;
+        }
+        return $this->executeAiCompletion($config, $systemPrompt, $userPrompt, $action);
+    }
+
+    /**
      * Test connection to configured AI provider with latency measurement.
      */
     public function testConnection(AiConfig $config): array

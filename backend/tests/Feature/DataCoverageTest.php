@@ -26,7 +26,7 @@ class DataCoverageTest extends TestCase
 
     private function row(ConnectedAdAccount $a, string $date, float $spend, float $val, string $cur = 'USD'): void
     {
-        PerformanceMetric::create(['connected_ad_account_id' => $a->id, 'provider' => $a->provider, 'date' => $date, 'spend' => $spend, 'impressions' => 100, 'clicks' => 5, 'conversions' => 1, 'conversion_value' => $val, 'currency' => $cur]);
+        PerformanceMetric::create(['metadata'=>['outcome_contract'=>['version'=>'source-outcomes-1','provider'=>$a->provider,'count_metric'=>'synthetic-purchase','value_metric'=>'synthetic-purchase-value','attribution_basis'=>'synthetic-only','value_truth'=>'provider_reported_not_verified_sales','cross_source_equivalence'=>false],'normalization_version'=>'strict-operands-1','account_metadata_source'=>'provider-discovery-explicit-1','metric_definition'=>['version'=>'meta-pixel-purchase-1','normalization'=>'strict-meta-operands-1','account_metadata_source'=>'meta-discovery-explicit-1','conversion'=>'offsite_conversion.fb_pixel_purchase','value'=>'offsite_conversion.fb_pixel_purchase']],'connected_ad_account_id' => $a->id, 'provider' => $a->provider, 'date' => $date, 'spend' => $spend, 'impressions' => 100, 'clicks' => 5, 'conversions' => 1, 'conversion_value' => $val, 'currency' => $cur]);
     }
 
     private function cov(User $u): array
@@ -50,6 +50,8 @@ class DataCoverageTest extends TestCase
         $this->assertSame('not_connected', $p['snapchat']['status']);
         $this->assertSame(10.0, (float) $p['meta']['totals_by_currency']['USD']['spend']);
         $this->assertTrue($p['meta']['has_conversion_value']);
+        $this->assertSame('10.0000',$p['meta']['recorded_arithmetic_by_currency']['USD']['metrics']['spend']['decimal']);
+        $this->assertSame('exact_over_persisted_operands',$p['meta']['recorded_arithmetic_by_currency']['USD']['arithmetic']);
         $this->assertNull($p['tiktok']['first_date']);
     }
 
@@ -61,10 +63,11 @@ class DataCoverageTest extends TestCase
         $p = $this->cov($u)['snapchat'];
         $this->assertFalse($p['has_conversion_value']);
         $this->assertFalse($p['has_campaign_level_rows']);
-        $this->assertArrayHasKey('EUR', $p['totals_by_currency']);
+        $this->assertSame([], $p['totals_by_currency']);
+        $this->assertStringContainsString('spend only', implode(' ', $p['gaps']));
         $this->assertArrayNotHasKey('USD', $p['totals_by_currency']);
-        $this->assertStringContainsString('left out of the OR model', implode(' ', $p['gaps']));
-        $this->assertStringContainsString('not link clicks', implode(' ', $p['gaps']));
+        $this->assertStringContainsString('withheld from analytics and OR', implode(' ', $p['gaps']));
+        $this->assertStringContainsString('not conversion finality evidence', implode(' ', $p['gaps']));
     }
 
     public function test_other_users_data_is_never_visible(): void
@@ -85,5 +88,11 @@ class DataCoverageTest extends TestCase
         $this->assertSame('connected_no_data', $p['status']);
         $this->assertSame('failed', $p['accounts'][0]['last_sync_status']);
         $this->assertSame('token_expired', $p['accounts'][0]['last_sync_error']);
+    }
+    public function test_delivery_only_provider_roster_does_not_fabricate_unified_report_rows():void{
+        $u=$this->user('cov-x@example.com');$this->acct($u,'x','x1');$p=$this->cov($u);$this->assertSame('connected_no_data',$p['x']['status']);$this->assertEmpty($p['x']['totals_by_currency']);$this->assertArrayHasKey('apple',$p);$this->assertArrayHasKey('outbrain',$p);$this->assertArrayHasKey('walmart',$p);
+    }
+    public function test_parent_child_overlap_withholds_totals_instead_of_double_counting():void{
+        $u=$this->user('cov-overlap@example.com');$a=$this->acct($u,'meta','overlap');$this->row($a,now()->subDay()->toDateString(),100,300);$c=\App\Models\Campaign::create(['connected_ad_account_id'=>$a->id,'provider'=>'meta','external_campaign_id'=>'c','name'=>'C','currency'=>'USD']);PerformanceMetric::create(['metadata'=>['outcome_contract'=>['version'=>'source-outcomes-1','provider'=>$a->provider,'count_metric'=>'synthetic-purchase','value_metric'=>'synthetic-purchase-value','attribution_basis'=>'synthetic-only','value_truth'=>'provider_reported_not_verified_sales','cross_source_equivalence'=>false],'normalization_version'=>'strict-operands-1','account_metadata_source'=>'provider-discovery-explicit-1','metric_definition'=>['version'=>'meta-pixel-purchase-1','normalization'=>'strict-meta-operands-1','account_metadata_source'=>'meta-discovery-explicit-1','conversion'=>'offsite_conversion.fb_pixel_purchase','value'=>'offsite_conversion.fb_pixel_purchase']],'connected_ad_account_id'=>$a->id,'campaign_id'=>$c->id,'provider'=>'meta','date'=>now()->subDay()->toDateString(),'spend'=>100,'impressions'=>100,'clicks'=>5,'conversions'=>1,'conversion_value'=>300,'currency'=>'USD']);$p=$this->cov($u)['meta'];$this->assertSame('withheld_scope_conflict',$p['totals_status']);$this->assertEmpty($p['totals_by_currency']);$this->assertStringContainsString('Overlapping hierarchy',$p['totals_reason']);$this->assertEmpty($p['recorded_arithmetic_by_currency']);$overview=$this->getJson('/api/v1/analytics/overview?provider=meta')->assertOk();$this->assertSame('unavailable',$overview->json('recorded_native_evidence.groups.meta/USD.status'));$this->assertNull($overview->json('recorded_native_evidence.groups.meta/USD.recorded_arithmetic.metrics.spend.decimal'));
     }
 }

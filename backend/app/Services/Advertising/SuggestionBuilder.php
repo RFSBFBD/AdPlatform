@@ -32,7 +32,7 @@ class SuggestionBuilder
                 $out[] = $this->item('data', $pv, 'attention', "$name has no purchase value", "Without purchase value, $name cannot be scored for return and is left out of the OR model. Check that purchase tracking is set up for it.", [['pulled_data', "$pv.has_conversion_value", 'false']]);
             }
             if ($pv === 'snapchat' && $p['status'] === 'data_available') {
-                $out[] = $this->item('data', $pv, 'info', 'Read Snapchat numbers with its limits', 'Snapchat data is account-level only, swipes are not link clicks, and purchase value exists only for ads tracked with Snap Pixel.', [['pulled_data', 'snapchat.has_campaign_level_rows', $p['has_campaign_level_rows'] ? 'true' : 'false']]);
+                $out[] = $this->item('data', $pv, 'info', 'Read Snapchat numbers with its limits', 'The implemented bare Snapchat account endpoint supports spend inspection only. Stored delivery and purchase rows are not a supported analytical source; no budget recommendation is available.', [['pulled_data', 'snapchat.has_campaign_level_rows', $p['has_campaign_level_rows'] ? 'true' : 'false']]);
             }
         }
 

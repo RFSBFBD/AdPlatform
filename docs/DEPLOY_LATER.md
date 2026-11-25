@@ -1,8 +1,10 @@
 # Production apply notes
 
-Current state: https://ad-platform-alpha.vercel.app serves the Angular frontend AND the Laravel backend (Vercel multi-service: `/api/*` routes to the backend container, everything else to the SPA). Database: Neon Postgres. Login works there.
+## Historical deployment notes, not current-state evidence
 
-What is still NOT done on the live site: no ad provider account was ever connected, no OAuth flow ran against a real provider, no real AI model key was used, and scheduled sync is not enabled (sync is the manual Sync button).
+The earlier deployment description has not been revalidated. This checkpoint did not inspect or change any hosted environment, build a Docker image, verify hosted login/database routing, enable scheduled sync or connect a live provider. Do not infer any current site availability or architecture from this file. The checked-in Vercel/container configuration is a deployment candidate, not a verified deployment.
+
+Owner-controlled deployment requires a separate review of runtime, secret storage, authentication, database, backups, TLS, provider approvals and operational monitoring. Review the current source and provider matrix rather than assuming all providers share credentials or OAuth rules.
 
 Before real provider connections are possible, the owner must provide:
 1. Secrets in server env only: APP_KEY, DB credentials, provider app credentials (Meta, Google incl. developer token, TikTok, Snapchat). Nothing goes in the frontend.
@@ -13,4 +15,4 @@ Before real provider connections are possible, the owner must provide:
 
 First owner account: set ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD in the server env before seeding. The seeder has no built-in password and never overwrites an existing account's password.
 
-Migrations run on PostgreSQL 16 (tested on 16.2) and SQLite; production path is PostgreSQL/Neon. Run `php artisan migrate` on your own environment; nothing is applied to production automatically.
+Fresh-schema migrations were verified against a local synthetic PostgreSQL database. This does not verify a hosted PostgreSQL/Neon database or every SQLite migration path. Run `php artisan migrate` on your own environment; nothing is applied to production automatically.

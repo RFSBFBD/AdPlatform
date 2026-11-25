@@ -43,6 +43,7 @@ class ProviderDeveloperConfig extends Model
             'masked_developer_token' => $this->maskSecret($this->developer_token),
             'redirect_uri' => $this->redirect_uri,
             'api_version' => $this->api_version,
+            'region' => $this->provider==='amazon'?($this->extra_settings['region']??null):null,
             'is_enabled' => $this->is_enabled,
             'last_tested_at' => $this->last_tested_at?->toIso8601String(),
             'test_status' => $this->test_status,

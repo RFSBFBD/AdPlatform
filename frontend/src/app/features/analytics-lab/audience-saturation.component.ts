@@ -1,0 +1,23 @@
+import {Component,inject,signal} from '@angular/core';
+import {CommonModule} from '@angular/common';
+import {FormsModule} from '@angular/forms';
+import {HttpClient} from '@angular/common/http';
+@Component({selector:'app-audience-saturation',standalone:true,imports:[CommonModule,FormsModule],template:`
+<section><div class="head"><span class="tag">ESTIMATED</span><h3>Frequency saturation estimate, one entity</h3></div>
+<p>Looks for a frequency level after which the entity's own daily CTR falls or CPA rises. It needs at least 21 usable days with varied frequency. It is an observational association with a resampling interval, not proof that frequency caused the change, and it is not a recommendation to change spend.</p>
+<div class="controls"><div><label for="sat-account">Owned account ID</label><input id="sat-account" type="number" [ngModel]="account()" (ngModelChange)="account.set($event);clear()" min="1"/></div>
+<div><label for="sat-level">Reporting level</label><select id="sat-level" [ngModel]="level()" (ngModelChange)="level.set($event);clear()"><option value="campaign">Campaign</option><option value="ad_set">Ad set / group</option><option value="ad">Ad</option></select></div>
+<div><label for="sat-entity">Entity ID</label><input id="sat-entity" type="number" [ngModel]="entity()" (ngModelChange)="entity.set($event);clear()" min="1"/></div>
+<div><label for="sat-metric">Metric</label><select id="sat-metric" [ngModel]="metric()" (ngModelChange)="metric.set($event);clear()"><option value="ctr">CTR</option><option value="cpa">CPA</option></select></div>
+<button (click)="load()" [disabled]="loading()">{{loading()?'Loading...':'Estimate'}}</button></div>
+@if(result();as r){
+@if(r.status==='ok'&&r.saturation_threshold!==null&&r.interval){<div class="found" role="note"><strong>Estimated threshold: frequency {{r.saturation_threshold | number:'1.2-2'}}</strong><br/>95% resampling interval {{r.interval.low | number:'1.2-2'}} to {{r.interval.high | number:'1.2-2'}}. {{r.label}}</div><p>Based on {{r.usable_days}} usable days. Deteriorating direction held in {{r.deterioration_share*100 | number:'1.0-0'}}% of resamples. Interval kind: not a causal interval; consecutive days are dependent, so it is optimistic.</p>}
+@else{<div class="none" role="note"><strong>No saturation threshold is reported.</strong> {{r.reason}}</div>}
+@if(r.limits){<ul>@for(l of r.limits;track $index){<li>{{l}}</li>}</ul>}
+@if(r.relevance_note){<p>{{r.relevance_note}}</p>}}</section>`,styles:[`:host{display:block;min-width:0}section{border:1px solid var(--border-color,#dce4ef);border-radius:16px;padding:24px;background:var(--bg-surface,#fff);min-width:0}.head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}h3{font-size:19px;margin:0}.tag{font-size:11px;font-weight:700;background:#fef3c7;color:#92400e;border-radius:8px;padding:3px 8px}p,li{font-size:12px;line-height:1.7;color:var(--text-muted,#64748b)}.controls{display:flex;gap:14px;flex-wrap:wrap;align-items:end}.controls>div{flex:1;min-width:140px}label{display:block;font-size:12px;margin-bottom:7px}input,select{width:100%;box-sizing:border-box;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:var(--bg-surface,#fff);color:inherit}button{padding:11px 16px;background:#4f46e5;color:#fff;border:0;border-radius:8px}.found{margin-top:14px;padding:12px;border-radius:10px;background:#fffbeb;border:1px solid #f59e0b;font-size:13px;overflow-wrap:anywhere}.none{margin-top:14px;padding:12px;border-radius:10px;background:#f1f5f9;font-size:13px;overflow-wrap:anywhere}`]})
+export class AudienceSaturationComponent{
+ private readonly http=inject(HttpClient);private request=0;
+ readonly account=signal<number|null>(null);readonly entity=signal<number|null>(null);readonly level=signal('campaign');readonly metric=signal('ctr');readonly result=signal<any>(null);readonly loading=signal(false);
+ clear():void{this.request++;this.result.set(null);this.loading.set(false);}
+ load():void{this.clear();const a=this.account(),e=this.entity();if(!Number.isInteger(a)||a!<=0||!Number.isInteger(e)||e!<=0){this.result.set({status:'invalid_input',reason:'Enter an owned account ID and an entity ID.'});return;}const key=this.request;this.loading.set(true);this.http.get<any>('/api/v1/analytics/audience-saturation',{params:{account_id:a!,entity_level:this.level(),entity_id:e!,metric:this.metric(),days:60}}).subscribe({next:r=>{if(key===this.request){this.result.set(r.data);this.loading.set(false);}},error:err=>{if(key===this.request){this.result.set({status:'unavailable',reason:err.status===404?'That account or entity is not among your accounts.':err.status===422?'Check the IDs and metric, then try again.':'Estimate unavailable.'});this.loading.set(false);}}});}
+}

@@ -6,7 +6,7 @@ import { ButtonComponent } from '../../shared/components/button/button.component
 import { BadgeComponent, BadgeVariant } from '../../shared/components/badge/badge.component';
 import { IconComponent } from '../../shared/components/icon/icon.component';
 
-export type ProviderId = 'meta' | 'google' | 'tiktok' | 'snapchat';
+export type ProviderId = 'meta' | 'google' | 'tiktok' | 'snapchat' | 'taboola' | 'pinterest' | 'reddit' | 'spotify' | 'microsoft' | 'linkedin' | 'apple' | 'amazon' | 'x';
 
 export interface ProviderConfigDto {
   id?: number;
@@ -18,6 +18,7 @@ export interface ProviderConfigDto {
   masked_developer_token: string | null;
   redirect_uri: string | null;
   api_version: string | null;
+  region?: string | null;
   is_enabled: boolean;
   test_status: string;
   test_error: string | null;
@@ -64,9 +65,10 @@ export function createDefaultConfig(provider: ProviderId): ProviderConfigDto {
 
         <p class="setup-explainer">
           One setup per platform, for the app owner only. These credentials identify this platform's app at
-          {{ providerName }}; ad data always comes from the account connected in Step 2, never from here.
+          {{ providerName }}; report access comes from Step 2. Taboola and Apple instead use shared client credentials and are restricted to administrators.
         </p>
 
+        @if (cfg.provider !== 'taboola' && cfg.provider !== 'apple') {
         <div class="form-group">
           <label class="form-label">Redirect URI to register in the {{ providerName }} app</label>
           <div class="url-copy-box">
@@ -79,6 +81,7 @@ export function createDefaultConfig(provider: ProviderId): ProviderConfigDto {
           <span class="field-hint">Callback used by this deployment. Register it in the provider app AND the backend OAUTH_ALLOWED_REDIRECT_URIS allowlist. This does not confirm either is configured. Use the final HTTPS deployment, not a local preview.</span>
         </div>
 
+        }
         @if (message()) {
           <div [class]="'inline-feedback ' + messageType()">{{ message() }}</div>
         }
@@ -115,7 +118,7 @@ export function createDefaultConfig(provider: ProviderId): ProviderConfigDto {
           </div>
         </div>
 
-        @if (cfg.provider === 'google') {
+        @if (['google', 'microsoft'].includes(cfg.provider)) {
           <div class="form-group">
             <label class="form-label" for="googleDevToken">
               Developer Token
@@ -138,6 +141,18 @@ export function createDefaultConfig(provider: ProviderId): ProviderConfigDto {
           </div>
         }
 
+        @if (cfg.provider === 'amazon') {
+          <label class="form-label" for="amazonRegion">Amazon profile region</label>
+          <select id="amazonRegion" class="form-input" [(ngModel)]="regionInput"><option value="">Choose region</option><option value="NA">North America</option><option value="EU">Europe / Middle East (including Egypt)</option><option value="FE">Far East</option></select>
+          <p class="field-hint">One configured region per app in this release. Report imports require a verified download-host allowlist and endDate policy in deployment.</p>
+        }
+        @if (cfg.provider === 'linkedin') {
+          <div class="form-group">
+            <label class="form-label" for="linkedinVersion">LinkedIn API version (YYYYMM)</label>
+            <input id="linkedinVersion" type="text" class="form-input" [(ngModel)]="versionInput" placeholder="Supported YYYYMM version, e.g. 202611" />
+            <span class="field-hint">Verify the version is currently supported. Conversion-value reporting is disabled until verified in deployment configuration.</span>
+          </div>
+        }
         <div class="card-actions">
           <app-button variant="primary" size="sm" [loading]="saving()" [disabled]="configStatus() !== 'loaded'" (clicked)="save()">
             Save {{ providerName }} App
@@ -248,6 +263,7 @@ export class ProviderAppConfigComponent {
   appIdInput = '';
   secretInput = '';
   tokenInput = '';
+  versionInput = '';
 
   readonly showSecret = signal<boolean>(false);
   readonly showToken = signal<boolean>(false);
@@ -259,6 +275,7 @@ export class ProviderAppConfigComponent {
   readonly redirectUri = `${window.location.origin}/accounts`;
   readonly copiedUri = signal<boolean>(false);
 
+  regionInput = '';
   private appIdLoaded = false;
 
   ngDoCheck(): void {
@@ -268,6 +285,8 @@ export class ProviderAppConfigComponent {
       const cfg = this.config();
       if (cfg.app_id) {
         this.appIdInput = cfg.app_id;
+        this.versionInput = cfg.api_version ?? '';
+        this.regionInput = cfg.region ?? '';
         this.appIdLoaded = true;
       }
     }
@@ -279,11 +298,20 @@ export class ProviderAppConfigComponent {
       case 'google': return 'Google';
       case 'tiktok': return 'TikTok';
       case 'snapchat': return 'Snapchat';
+      case 'x': return 'X Ads';
+      case 'amazon': return 'Amazon Ads';
+      case 'apple': return 'Apple Ads';
+      case 'microsoft': return 'Microsoft Advertising';
+      case 'linkedin': return 'LinkedIn';
+      case 'spotify': return 'Spotify';
+      case 'reddit': return 'Reddit';
+      case 'pinterest': return 'Pinterest';
+      case 'taboola': return 'Taboola';
     }
   }
 
   get idLabel(): string {
-    return this.provider() === 'google' || this.provider() === 'snapchat' ? 'Client ID' : 'App ID';
+    return this.provider()==='x'?'Consumer API key':(this.provider() === 'google' || this.provider() === 'snapchat' ? 'Client ID' : 'App ID');
   }
 
   get idPlaceholder(): string {
@@ -292,16 +320,27 @@ export class ProviderAppConfigComponent {
       case 'google': return 'e.g. 12345-abc.apps.googleusercontent.com';
       case 'tiktok': return 'e.g. 6900000000000000000';
       case 'snapchat': return 'OAuth app client ID';
+      case 'x': return 'X consumer API key (OAuth1, not OAuth2 client ID)';
+      case 'amazon': return 'Login with Amazon client ID';
+      case 'apple': return 'Apple client ID';
+      case 'microsoft': return 'Microsoft Entra client ID';
+      case 'linkedin': return 'LinkedIn client ID';
+      case 'spotify': return 'Spotify client ID';
+      case 'reddit': return 'Reddit app ID';
+      case 'pinterest': return 'Pinterest app ID';
+      case 'taboola': return 'Taboola API client ID';
     }
   }
 
   get secretLabel(): string {
+    if (this.provider() === 'x') return 'Consumer API secret (OAuth1)';
+    if (this.provider() === 'apple') return 'Pre-signed ES256 client-secret JWT';
     return this.provider() === 'google' || this.provider() === 'snapchat' ? 'Client Secret' : 'App Secret';
   }
 
   isComplete(cfg: ProviderConfigDto): boolean {
     const base = !!cfg.app_id && cfg.has_secret;
-    return cfg.provider === 'google' ? base && cfg.has_developer_token : base;
+    return ['google', 'microsoft'].includes(cfg.provider) ? base && cfg.has_developer_token : base;
   }
 
   badgeText(cfg: ProviderConfigDto): string {
@@ -328,8 +367,10 @@ export class ProviderAppConfigComponent {
     if (this.configStatus() !== 'loaded') return;
     const cfg = this.config();
     const payload: Record<string, any> = { app_id: this.appIdInput };
+    if (cfg.provider === 'amazon') payload['region'] = this.regionInput || null;
+    if (cfg.provider === 'linkedin') payload['api_version'] = this.versionInput;
     if (this.secretInput) payload['app_secret'] = this.secretInput;
-    if (cfg.provider === 'google' && this.tokenInput) payload['developer_token'] = this.tokenInput;
+    if (['google', 'microsoft'].includes(cfg.provider) && this.tokenInput) payload['developer_token'] = this.tokenInput;
 
     this.saving.set(true);
     this.http.put<{ success: boolean; message: string; data: ProviderConfigDto }>(
