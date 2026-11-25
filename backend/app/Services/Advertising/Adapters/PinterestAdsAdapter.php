@@ -76,11 +76,14 @@ class PinterestAdsAdapter implements AdvertisingProviderInterface
         if (!$account->timezone || !in_array($account->timezone, \DateTimeZone::listIdentifiers(), true)) { throw new RuntimeException('Pinterest account timezone is required for account-day reporting.'); }
         $start = \Carbon\CarbonImmutable::createFromFormat('!Y-m-d', $startDate, 'UTC');
         $end = \Carbon\CarbonImmutable::createFromFormat('!Y-m-d', $endDate, 'UTC');
-        if (!$start || !$end || $start->format('Y-m-d') !== $startDate || $end->format('Y-m-d') !== $endDate || $start->gt($end)
-            || $start->lt(now('UTC')->startOfDay()->subDays(90)) || $end->gt(now('UTC')->startOfDay()) || $start->diffInDays($end) >= 90) {
-            throw new RuntimeException('Pinterest daily reports require a valid range within the last 90 days.');
+        $today = now('UTC')->startOfDay();
+        if (!$start || !$end || $start->format('Y-m-d') !== $startDate || $end->format('Y-m-d') !== $endDate || $start->gt($end) || $end->gt($today)) {
+            throw new RuntimeException('Pinterest daily reports require a valid date range that does not end in the future.');
         }
-        $columns = ['SPEND_IN_MICRO_DOLLAR','PAID_IMPRESSION','OUTBOUND_CLICK_1','TOTAL_CHECKOUT','TOTAL_CHECKOUT_VALUE_IN_MICRO_DOLLAR'];
+        if ($start->lt($today->subDays(90)) || $start->diffInDays($end) >= 90) {
+            return $this->fetchInsightsAsync($account, $start, $end);
+        }
+        $columns = self::COLUMNS;
         $path = '/ad_accounts/'.rawurlencode($account->external_account_id).'/analytics';
         $query = ['start_date' => $startDate, 'end_date' => $endDate,
             'columns' => implode(',', $columns), 'granularity' => 'DAY', 'click_window_days' => 30,
@@ -93,8 +96,99 @@ class PinterestAdsAdapter implements AdvertisingProviderInterface
             'currency' => $account->currency, 'timezone' => $account->timezone, 'start_date' => $startDate, 'end_date' => $endDate,
             'retrieved_at' => now()->toIso8601String(), 'status' => $response->status(), 'precision_state' => 'original_body_retained_not_yet_qualified']];
         if (!array_is_list($j)) { throw new RuntimeException('Pinterest report response must be a row array.'); }
-        $metrics = []; $dates = [];
-        foreach ($j as $r) {
+        $dates = [];
+        $metrics = $this->normalizeRows($j, $account, $startDate, $endDate, $dates);
+        return ['endpoint' => $path, 'raw' => [$j], 'metrics' => $metrics, 'recorded_response_pages' => $recordedPages];
+    }
+    /** Columns shared by the synchronous and the asynchronous account-day report. */
+    private const COLUMNS = ['SPEND_IN_MICRO_DOLLAR','PAID_IMPRESSION','OUTBOUND_CLICK_1','TOTAL_CHECKOUT','TOTAL_CHECKOUT_VALUE_IN_MICRO_DOLLAR'];
+    /** Status values seen in the async report flow. Anything else is refused. */
+    private const ASYNC_FAILED = ['DOES_NOT_EXIST', 'EXPIRED', 'FAILED', 'CANCELLED'];
+    private const ASYNC_MAX_RANGE_DAYS = 180;
+    private const ASYNC_MAX_LOOKBACK_DAYS = 914;
+    private const ASYNC_MAX_POLLS = 30;
+    private const ASYNC_MAX_BYTES = 8 * 1024 * 1024;
+    /** @var null|callable(int):void Seconds to wait between polls. Replaceable in tests. */
+    private $pollWait = null;
+    public function setPollWait(callable $wait): void { $this->pollWait = $wait; }
+
+    /**
+     * Long-history account/day report through the async flow: POST /ad_accounts/{id}/reports,
+     * poll GET /ad_accounts/{id}/reports?token=, then download the pre-signed url.
+     * Official contract: granularity other than HOUR allows up to 914 days back and a 186-day range.
+     * We use 180-day chunks. Any failed, expired or malformed chunk refuses the whole import: no partial data.
+     * Fixture and contract verified only. The downloaded file shape is taken from a third-party connector, not an official page.
+     */
+    private function fetchInsightsAsync(ConnectedAdAccount $account, \Carbon\CarbonImmutable $start, \Carbon\CarbonImmutable $end): array
+    {
+        $today = now('UTC')->startOfDay();
+        if ($start->lt($today->subDays(self::ASYNC_MAX_LOOKBACK_DAYS))) {
+            throw new RuntimeException('Pinterest daily reports reach back at most '.self::ASYNC_MAX_LOOKBACK_DAYS.' days.');
+        }
+        $path = '/ad_accounts/'.rawurlencode($account->external_account_id).'/reports';
+        $metrics = []; $raw = []; $pages = []; $dates = [];
+        for ($cursor = $start; $cursor->lte($end); $cursor = $cursor->addDays(self::ASYNC_MAX_RANGE_DAYS)) {
+            $chunkEnd = $cursor->addDays(self::ASYNC_MAX_RANGE_DAYS - 1);
+            if ($chunkEnd->gt($end)) { $chunkEnd = $end; }
+            $from = $cursor->format('Y-m-d'); $to = $chunkEnd->format('Y-m-d');
+            $body = ['start_date' => $from, 'end_date' => $to, 'level' => 'ADVERTISER', 'granularity' => 'DAY',
+                'columns' => array_merge(['AD_ACCOUNT_ID'], self::COLUMNS), 'click_window_days' => 30,
+                'engagement_window_days' => 30, 'view_window_days' => 1, 'conversion_report_time' => 'TIME_OF_AD_ACTION',
+                'reporting_timezone' => 'AD_ACCOUNT_TIME_ZONE', 'report_format' => 'JSON'];
+            $created = $this->send($account->access_token, 'post', $path, $body);
+            $token = $created['token'] ?? null;
+            if (!is_string($token) || $token === '') { throw new RuntimeException('Pinterest async report was not created (no token).'); }
+            $url = $this->waitForReportUrl($account->access_token, $path, $token);
+            $download = Http::timeout(60)->connectTimeout(10)->get($url);
+            $text = $download->body();
+            if ($download->failed()) { throw new RuntimeException('Pinterest report download failed (HTTP '.$download->status().').'); }
+            if (strlen($text) > self::ASYNC_MAX_BYTES) { throw new RuntimeException('Pinterest async report exceeds evidence capture limit; no partial import.'); }
+            $json = json_decode($text, true);
+            if (!is_array($json)) { throw new RuntimeException('Pinterest async report is not valid JSON.'); }
+            $rows = [];
+            foreach ($json as $group) {
+                if (!is_array($group) || !array_is_list($group)) { throw new RuntimeException('Pinterest async report has an unexpected shape; import refused.'); }
+                foreach ($group as $r) { if (!is_array($r)) { throw new RuntimeException('Pinterest async report has an unexpected row; import refused.'); } $rows[] = $r; }
+            }
+            $metrics = array_merge($metrics, $this->normalizeRows($rows, $account, $from, $to, $dates));
+            $raw[] = $json;
+            $pages[] = ['body' => $text, 'sha256' => hash('sha256', $text),
+                'request' => ['endpoint' => $path, 'api_version' => 'v5', 'mode' => 'async'] + $body,
+                'account_external_id' => $account->external_account_id, 'currency' => $account->currency, 'timezone' => $account->timezone,
+                'start_date' => $from, 'end_date' => $to, 'retrieved_at' => now()->toIso8601String(), 'status' => $download->status(),
+                'precision_state' => 'original_body_retained_not_yet_qualified'];
+        }
+        return ['endpoint' => $path, 'raw' => $raw, 'metrics' => $metrics, 'recorded_response_pages' => $pages];
+    }
+
+    private function waitForReportUrl(string $token, string $path, string $reportToken): string
+    {
+        for ($i = 0; $i < self::ASYNC_MAX_POLLS; $i++) {
+            $j = $this->send($token, 'get', $path, ['token' => $reportToken]);
+            $status = $j['report_status'] ?? null;
+            if ($status === 'FINISHED') {
+                $url = $j['url'] ?? null;
+                $p = is_string($url) ? parse_url($url) : false;
+                $host = is_array($p) ? strtolower((string) ($p['host'] ?? '')) : '';
+                if (!is_array($p) || ($p['scheme'] ?? '') !== 'https' || $host === '' || isset($p['user']) || isset($p['pass'])
+                    || (isset($p['port']) && (int) $p['port'] !== 443) || filter_var(trim($host, '[]'), FILTER_VALIDATE_IP)
+                    || $host === 'localhost' || str_ends_with($host, '.local') || str_ends_with($host, '.internal')) {
+                    throw new RuntimeException('Pinterest report download url is not an acceptable public https address.');
+                }
+                return $url;
+            }
+            if (in_array($status, self::ASYNC_FAILED, true)) { throw new RuntimeException('Pinterest async report ended as '.$status.'; import refused.'); }
+            if ($status !== 'IN_PROGRESS') { throw new RuntimeException('Pinterest async report returned an unknown status; import refused.'); }
+            ($this->pollWait ?? static fn (int $s) => sleep($s))(3);
+        }
+        throw new RuntimeException('Pinterest async report did not finish in time; import refused.');
+    }
+
+    /** @param list<array<string,mixed>> $rows */
+    private function normalizeRows(array $rows, ConnectedAdAccount $account, string $startDate, string $endDate, array &$dates): array
+    {
+        $columns = self::COLUMNS; $metrics = [];
+        foreach ($rows as $r) {
             foreach ($columns as $key) {
                 if (!isset($r[$key]) || !is_numeric($r[$key]) || !is_finite((float)$r[$key]) || $r[$key] < 0) {
                     throw new RuntimeException('Pinterest report contains missing, suppressed or invalid metrics; import refused.');
@@ -111,7 +205,18 @@ class PinterestAdsAdapter implements AdvertisingProviderInterface
                 'conversion_value' => \App\Services\Advertising\MetricOperand::read($r,'TOTAL_CHECKOUT_VALUE_IN_MICRO_DOLLAR',false,1000000),
                 'metric_definition' => ['conversion' => 'checkout', 'clicks' => 'outbound_clicks', 'click_window_days' => 30, 'engagement_window_days' => 30, 'view_window_days' => 1, 'conversion_report_time' => 'TIME_OF_AD_ACTION', 'reporting_timezone' => $account->timezone]];
         }
-        return ['endpoint' => $path, 'raw' => [$j], 'metrics' => $metrics, 'recorded_response_pages' => $recordedPages];
+        return $metrics;
+    }
+
+    private function send(string $token, string $method, string $path, array $params): array
+    {
+        $req = Http::withToken($token)->timeout(30)->connectTimeout(10);
+        $r = $method === 'post' ? $req->asJson()->post(self::BASE.$path, $params) : $req->get(self::BASE.$path, $params);
+        if ($r->status() === 401) { throw new \App\Exceptions\OAuthTokenExpiredException('Pinterest token expired.', 'pinterest'); }
+        if ($r->status() === 429) { throw new \App\Exceptions\ProviderRateLimitException('Pinterest API rate limited the request.', 'pinterest'); }
+        $j = $r->json();
+        if ($r->failed() || !is_array($j)) { throw new RuntimeException('Pinterest response failed (HTTP '.$r->status().').'); }
+        return $j;
     }
     private function get(string $token, string $path, array $params): array
     {
