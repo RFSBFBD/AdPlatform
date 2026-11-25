@@ -2,6 +2,15 @@
 
 Snapchat analytical support is unavailable. The implemented bare account stats endpoint is spend-inspection only; canonical imports fail without advancing last-success, and old Snap analytical rows/archives are withheld without editing them. See SNAP_ACCOUNT_SOURCE_CORRECTION.md. This supersedes earlier descriptions implying account-level purchase/delivery support or fixed48h conversion finality. Other provider/typed-lead functionality is not expanded or newly certified. Cross-provider portfolios remain blocked.
 
+# Deployed state and access rules (verified 25 November 2026)
+
+- Production at https://ad-platform-alpha.vercel.app runs main at commit a88df8e (Vercel deployment Ready). A normal sign-in and the Dashboard, Campaigns and Team pages were opened read-only. The deployment holds no campaign data and no provider connection.
+- Roles: Owner, Admin, Analyst, Viewer. Only an Owner can assign, change or remove an Owner, and the last Owner can never be demoted or removed. Business-profile and AI-config writes need Admin or Owner. The Media Buyer role does not exist.
+- All Channels excludes Snapchat (spend-only source) and says so on the page. The Dashboard and Campaigns platform filters list 11 platforms; X, Apple, Outbrain and Walmart are not offered there.
+- Vercel preview deployments use the same database as production. Do not exercise write flows on a preview.
+- Not covered by this document: backups, monitoring, scheduled sync and any real provider connection. None of these was inspected.
+- Features on unmerged feature branches (not deployed): Team page role change and member removal (feature/team-role-management); Pinterest async long-history reports (feature/pinterest-async-reports, fixture-tested only).
+
 # AdPlatform local operating guide
 
 Status: local implementation in progress, 24 November 2026. Read SOURCE_CHECKPOINT_2026_11_24.md first for the consolidated successful-use guide and current limitations. No deployment or current production-state verification is included in this development work. No live advertising account, provider OAuth approval or paid service was used to verify these changes.
@@ -18,7 +27,7 @@ Verification environment and remaining implementation: see CHECKPOINT_VERIFICATI
 
 ## Verification
 
-Current local synthetic test checkpoint: 534 backend tests, 4219 assertions; 145 Angular tests and production frontend build. These counts describe this checkpoint, not permanent guarantees or live-integration evidence. Re-run after configuration, dependency, schema or runtime changes:
+Current local synthetic test checkpoint: on main at a88df8e, 677 backend tests (6412 assertions) and 216 Angular tests; on the experimental feature branches, 683 backend tests (6442 assertions) and 222 Angular tests. The suites were run on throwaway local PostgreSQL databases with synthetic data, and a full backend run wipes the database it runs on. Run it only on a throwaway database with APP_ENV=testing and the bootstrap-owner variables unset. These counts describe this checkpoint, not permanent guarantees or live-integration evidence. Re-run after configuration, dependency, schema or runtime changes:
 
 - backend/: php vendor/phpunit/phpunit/phpunit, using PostgreSQL per phpunit.xml. The backup/restore tests need compatible pg_dump/psql on PATH.
 - frontend/: npm test -- --watch=false, then npm run build.
