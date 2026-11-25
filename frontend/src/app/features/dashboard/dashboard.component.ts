@@ -6,6 +6,7 @@ import { StatCardComponent } from '../../shared/components/stat-card/stat-card.c
 import { EmptyStateComponent } from '../../shared/components/empty-state/empty-state.component';
 import { BadgeComponent } from '../../shared/components/badge/badge.component';
 import { IconComponent } from '../../shared/components/icon/icon.component';
+import { CoverageResponse, FreshnessRow, freshnessRows } from '../accounts/data-coverage';
 
 export interface OverviewSummary {
   spend: number;
@@ -187,6 +188,19 @@ export interface TimelineItem {
           <p class="or-empty">No portfolio suggestion is available. Provider-reported outcomes are not a verified joint business objective; supported source-scoped entity scenarios remain separate.</p>
         }
       </div>
+
+      @if (freshness().length) {
+        <section class="freshness" aria-label="Data freshness" data-testid="data-freshness">
+          <h3>Data freshness</h3>
+          <ul>
+            @for (r of freshness(); track r.provider + r.account) {
+              <li [attr.data-state]="r.state"><strong>{{ r.label }}</strong> · {{ r.account }}: {{ r.text }}. <span class="freshness-note">{{ r.note }}</span></li>
+            }
+          </ul>
+        </section>
+      } @else if (freshnessError()) {
+        <div class="state-note" role="note" data-testid="freshness-error">{{ freshnessError() }}</div>
+      }
 
       @if (excludedNote() && !loadError()) {
         <div class="state-note" role="note" data-testid="excluded-note">{{ excludedNote() }}</div>
@@ -716,6 +730,10 @@ export interface TimelineItem {
 
     .state-error, .state-note { display:flex; flex-direction:column; gap:4px; padding:12px 16px; border-radius:8px; margin-bottom:12px; font-size:0.875rem; }
     .state-error { background:#fef2f2; border:1px solid #fecaca; color:#991b1b; }
+    .freshness { padding:12px 16px; border:1px solid #cbd5e1; border-radius:8px; margin-bottom:12px; font-size:0.875rem; background:#f8fafc; color:#334155; }
+    .freshness h3 { margin:0 0 8px; font-size:0.95rem; }
+    .freshness ul { margin:0; padding-left:18px; display:flex; flex-direction:column; gap:4px; overflow-wrap:anywhere; }
+    .freshness-note { color:#64748b; }
     .state-note { background:#f1f5f9; border:1px solid #cbd5e1; color:#334155; }
     .loading-state {
       padding: 3rem;
@@ -845,6 +863,23 @@ export class DashboardFeatureComponent implements OnInit {
   ngOnInit(): void {
     this.fetchOverview();
     this.fetchOrSuggestions();
+    this.fetchFreshness();
+  }
+
+  readonly freshness = signal<FreshnessRow[]>([]);
+  readonly freshnessError = signal<string | null>(null);
+
+  fetchFreshness(): void {
+    this.http.get<{ success: boolean; data: CoverageResponse }>('/api/v1/analytics/data-coverage').subscribe({
+      next: (res) => {
+        this.freshnessError.set(null);
+        this.freshness.set(freshnessRows(res?.data, Date.now()));
+      },
+      error: () => {
+        this.freshness.set([]);
+        this.freshnessError.set('Data freshness is unavailable right now. It is unknown, not confirmed current.');
+      },
+    });
   }
 
   fetchOrSuggestions(): void {
