@@ -61,7 +61,7 @@ class PinterestAdapterTest extends TestCase
         Http::fake(function($req) use (&$polls){
             $u=$req->url();
             if($req->method()==='POST' && str_contains($u,'/ad_accounts/123/reports')){ static $n=0; $n++; return Http::response(['token'=>'tok-'.$n,'report_status'=>'IN_PROGRESS']); }
-            if(str_contains($u,'/ad_accounts/123/reports?token=')){ $polls++; return Http::response($polls%2===1 ? ['report_status'=>'IN_PROGRESS'] : ['report_status'=>'FINISHED','url'=>'https://reports.example-cdn.test/r'.($polls/2).'.json','size'=>100]); }
+            if(str_contains($u,'/ad_accounts/123/reports?token=')){ $polls++; return Http::response($polls%2===1 ? ['report_status'=>'IN_PROGRESS'] : ['report_status'=>'FINISHED','url'=>'https://8.8.8.8/r'.($polls/2).'.json','size'=>100]); }
             if(str_contains($u,'r1.json')){ return Http::response(['123'=>[$this->dayRow('2026-05-01')]]); }
             if(str_contains($u,'r2.json')){ return Http::response(['123'=>[$this->dayRow('2026-11-01')]]); }
             return Http::response([],500);
@@ -72,7 +72,7 @@ class PinterestAdapterTest extends TestCase
         $this->assertSame('async',$r['recorded_response_pages'][0]['request']['mode']);
         Http::assertSent(fn($q)=>$q->method()==='POST' && $q['level']==='ADVERTISER' && $q['granularity']==='DAY' && $q['start_date']==='2026-05-01' && $q['end_date']==='2026-10-27');
         Http::assertSent(fn($q)=>$q->method()==='POST' && $q['start_date']==='2026-10-28' && $q['end_date']==='2026-11-20');
-        Http::assertSent(fn($q)=>str_contains($q->url(),'reports.example-cdn.test') && !$q->hasHeader('Authorization'));
+        Http::assertSent(fn($q)=>str_contains($q->url(),'8.8.8.8') && !$q->hasHeader('Authorization'));
     }
     public function test_async_failed_or_unknown_status_refuses_whole_import(): void
     {
@@ -94,13 +94,13 @@ class PinterestAdapterTest extends TestCase
     public function test_async_refuses_unsafe_download_url_and_bad_shapes(): void
     {
         \Carbon\Carbon::setTestNow('2026-11-23');
-        foreach (['http://reports.example-cdn.test/r.json','https://127.0.0.1/r.json','https://user:pw@reports.example-cdn.test/r.json','https://localhost/r.json'] as $url) {
+        foreach (['http://8.8.8.8/r.json','https://127.0.0.1/r.json','https://10.0.0.5/r.json','https://169.254.169.254/latest/meta-data','https://192.168.1.10/r.json','https://[::1]/r.json','https://[fd00::1]/r.json','https://user:pw@8.8.8.8/r.json','https://8.8.8.8:8443/r.json','https://localhost/r.json'] as $url) {
             Http::fake(['*/reports?token=*'=>Http::response(['report_status'=>'FINISHED','url'=>$url]), '*/reports'=>Http::response(['token'=>'t'])]);
             try { $this->asyncAdapter()->fetchInsights($this->account(),'2026-05-01','2026-06-01'); $this->fail('expected refusal for '.$url); }
             catch (\RuntimeException $e) { $this->assertStringContainsString('download url', $e->getMessage()); }
         }
         foreach ([['not'=>'lists'],['123'=>['oops']],'text'] as $payload) {
-            Http::fake(['*/reports?token=*'=>Http::response(['report_status'=>'FINISHED','url'=>'https://reports.example-cdn.test/r.json']), '*/reports'=>Http::response(['token'=>'t']), 'reports.example-cdn.test/*'=>Http::response($payload)]);
+            Http::fake(['*/reports?token=*'=>Http::response(['report_status'=>'FINISHED','url'=>'https://8.8.8.8/r.json']), '*/reports'=>Http::response(['token'=>'t']), '8.8.8.8/*'=>Http::response($payload)]);
             try { $this->asyncAdapter()->fetchInsights($this->account(),'2026-05-01','2026-06-01'); $this->fail('expected refusal for a bad report shape'); }
             catch (\RuntimeException $e) { $this->assertStringContainsString('import refused', $e->getMessage().' import refused'); $this->assertStringNotContainsString('expected refusal', $e->getMessage()); }
         }
@@ -109,7 +109,7 @@ class PinterestAdapterTest extends TestCase
     {
         \Carbon\Carbon::setTestNow('2026-11-23');
         $bad=$this->dayRow('2026-05-01'); $bad['AD_ACCOUNT_ID']='999';
-        Http::fake(['*/reports?token=*'=>Http::response(['report_status'=>'FINISHED','url'=>'https://reports.example-cdn.test/r.json']), '*/reports'=>Http::response(['token'=>'t']), 'reports.example-cdn.test/*'=>Http::response(['123'=>[$bad]])]);
+        Http::fake(['*/reports?token=*'=>Http::response(['report_status'=>'FINISHED','url'=>'https://8.8.8.8/r.json']), '*/reports'=>Http::response(['token'=>'t']), '8.8.8.8/*'=>Http::response(['123'=>[$bad]])]);
         $this->expectException(\RuntimeException::class);
         $this->asyncAdapter()->fetchInsights($this->account(),'2026-05-01','2026-06-01');
     }
@@ -119,5 +119,29 @@ class PinterestAdapterTest extends TestCase
         foreach ([['2023-01-01','2023-02-01'],['2026-11-01','2026-11-30']] as [$s,$e]) {
             try { $this->asyncAdapter()->fetchInsights($this->account(),$s,$e); $this->fail('expected refusal'); } catch (\RuntimeException $x) { $this->assertTrue(true); }
         }
+    }
+    public function test_async_download_redirect_to_private_target_is_not_followed(): void
+    {
+        \Carbon\Carbon::setTestNow('2026-11-23');
+        Http::fake(['*/reports?token=*'=>Http::response(['report_status'=>'FINISHED','url'=>'https://8.8.8.8/r.json']), '*/reports'=>Http::response(['token'=>'t']),
+            '8.8.8.8/*'=>Http::response('', 302, ['Location'=>'https://169.254.169.254/latest/meta-data'])]);
+        try { $this->asyncAdapter()->fetchInsights($this->account(),'2026-05-01','2026-06-01'); $this->fail('expected refusal'); }
+        catch (\RuntimeException $e) { $this->assertStringContainsString('HTTP 200', $e->getMessage()); }
+        Http::assertNotSent(fn($q)=>str_contains($q->url(),'169.254.169.254'));
+    }
+    public function test_async_download_over_the_size_cap_is_refused(): void
+    {
+        \Carbon\Carbon::setTestNow('2026-11-23');
+        Http::fake(['*/reports?token=*'=>Http::response(['report_status'=>'FINISHED','url'=>'https://8.8.8.8/r.json']), '*/reports'=>Http::response(['token'=>'t']),
+            '8.8.8.8/*'=>Http::response(str_repeat('x', 8*1024*1024+1))]);
+        $this->expectException(\RuntimeException::class); $this->expectExceptionMessage('exceeds evidence capture limit');
+        $this->asyncAdapter()->fetchInsights($this->account(),'2026-05-01','2026-06-01');
+    }
+    public function test_async_download_failure_status_is_refused(): void
+    {
+        \Carbon\Carbon::setTestNow('2026-11-23');
+        Http::fake(['*/reports?token=*'=>Http::response(['report_status'=>'FINISHED','url'=>'https://8.8.8.8/r.json']), '*/reports'=>Http::response(['token'=>'t']), '8.8.8.8/*'=>Http::response('denied', 403)]);
+        $this->expectException(\RuntimeException::class); $this->expectExceptionMessage('HTTP 200');
+        $this->asyncAdapter()->fetchInsights($this->account(),'2026-05-01','2026-06-01');
     }
 }

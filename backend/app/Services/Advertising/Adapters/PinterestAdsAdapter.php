@@ -139,10 +139,7 @@ class PinterestAdsAdapter implements AdvertisingProviderInterface
             $token = $created['token'] ?? null;
             if (!is_string($token) || $token === '') { throw new RuntimeException('Pinterest async report was not created (no token).'); }
             $url = $this->waitForReportUrl($account->access_token, $path, $token);
-            $download = Http::timeout(60)->connectTimeout(10)->get($url);
-            $text = $download->body();
-            if ($download->failed()) { throw new RuntimeException('Pinterest report download failed (HTTP '.$download->status().').'); }
-            if (strlen($text) > self::ASYNC_MAX_BYTES) { throw new RuntimeException('Pinterest async report exceeds evidence capture limit; no partial import.'); }
+            $text = $this->downloadReport($url);
             $json = json_decode($text, true);
             if (!is_array($json)) { throw new RuntimeException('Pinterest async report is not valid JSON.'); }
             $rows = [];
@@ -155,10 +152,42 @@ class PinterestAdsAdapter implements AdvertisingProviderInterface
             $pages[] = ['body' => $text, 'sha256' => hash('sha256', $text),
                 'request' => ['endpoint' => $path, 'api_version' => 'v5', 'mode' => 'async'] + $body,
                 'account_external_id' => $account->external_account_id, 'currency' => $account->currency, 'timezone' => $account->timezone,
-                'start_date' => $from, 'end_date' => $to, 'retrieved_at' => now()->toIso8601String(), 'status' => $download->status(),
+                'start_date' => $from, 'end_date' => $to, 'retrieved_at' => now()->toIso8601String(), 'status' => 200,
                 'precision_state' => 'original_body_retained_not_yet_qualified'];
         }
         return ['endpoint' => $path, 'raw' => $raw, 'metrics' => $metrics, 'recorded_response_pages' => $pages];
+    }
+
+    /**
+     * Downloads the pre-signed report url. Public https only: the host is resolved here, every address must be public,
+     * and the connection is pinned to the checked address. Redirects are never followed (a redirect to a private target
+     * is refused), no Authorization header is sent, and size and time are bounded.
+     */
+    private function downloadReport(string $url): string
+    {
+        try {
+            $t = \App\Support\OutboundUrlGuard::assertPublicHttps($url);
+        } catch (\InvalidArgumentException $e) {
+            throw new RuntimeException('Pinterest report download url is not allowed: '.$e->getMessage());
+        }
+        $cap = self::ASYNC_MAX_BYTES;
+        try {
+            $r = Http::withoutRedirecting()->timeout(60)->connectTimeout(10)->withOptions([
+                'curl' => [CURLOPT_RESOLVE => ["{$t['host']}:443:{$t['ip']}"]],
+                'on_headers' => function ($response) use ($cap) {
+                    if ((int) $response->getHeaderLine('Content-Length') > $cap) { throw new RuntimeException('too large'); }
+                },
+                'progress' => function ($total, $downloaded) use ($cap) {
+                    if ($downloaded > $cap) { throw new RuntimeException('too large'); }
+                },
+            ])->get($url);
+        } catch (\Throwable $e) {
+            throw new RuntimeException('Pinterest report download failed or exceeded its limits; import refused.');
+        }
+        if ($r->status() !== 200) { throw new RuntimeException('Pinterest report download did not return HTTP 200 (got '.$r->status().'); import refused.'); }
+        $text = $r->body();
+        if (strlen($text) > $cap) { throw new RuntimeException('Pinterest async report exceeds evidence capture limit; no partial import.'); }
+        return $text;
     }
 
     private function waitForReportUrl(string $token, string $path, string $reportToken): string
@@ -168,13 +197,7 @@ class PinterestAdsAdapter implements AdvertisingProviderInterface
             $status = $j['report_status'] ?? null;
             if ($status === 'FINISHED') {
                 $url = $j['url'] ?? null;
-                $p = is_string($url) ? parse_url($url) : false;
-                $host = is_array($p) ? strtolower((string) ($p['host'] ?? '')) : '';
-                if (!is_array($p) || ($p['scheme'] ?? '') !== 'https' || $host === '' || isset($p['user']) || isset($p['pass'])
-                    || (isset($p['port']) && (int) $p['port'] !== 443) || filter_var(trim($host, '[]'), FILTER_VALIDATE_IP)
-                    || $host === 'localhost' || str_ends_with($host, '.local') || str_ends_with($host, '.internal')) {
-                    throw new RuntimeException('Pinterest report download url is not an acceptable public https address.');
-                }
+                if (!is_string($url) || $url === '') { throw new RuntimeException('Pinterest report finished without a download url; import refused.'); }
                 return $url;
             }
             if (in_array($status, self::ASYNC_FAILED, true)) { throw new RuntimeException('Pinterest async report ended as '.$status.'; import refused.'); }
