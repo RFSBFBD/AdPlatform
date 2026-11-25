@@ -6,6 +6,7 @@ import { ButtonComponent } from '../../shared/components/button/button.component
 import { BadgeComponent, BadgeVariant } from '../../shared/components/badge/badge.component';
 import { ModalComponent } from '../../shared/components/modal/modal.component';
 import { IconComponent } from '../../shared/components/icon/icon.component';
+import { AuthService } from '../../core/services/auth.service';
 
 export interface UserRoleDto {
   id: number;
@@ -64,6 +65,7 @@ export interface UserDto {
                 <th>Role</th>
                 <th>Status</th>
                 <th>Joined Date</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -89,6 +91,26 @@ export interface UserDto {
                     </app-badge>
                   </td>
                   <td>{{ formatDate(user.created_at) }}</td>
+                  <td>
+                    @if (canManage(user)) {
+                      <div class="row-actions">
+                        <select
+                          class="form-input role-select"
+                          [attr.aria-label]="'Change role for ' + user.name"
+                          [ngModel]="getUserRole(user)"
+                          [disabled]="busyUserId() === user.id"
+                          (ngModelChange)="changeRole(user, $event)"
+                        >
+                          @for (r of assignableRoles(); track r) {
+                            <option [value]="r">{{ r }}</option>
+                          }
+                        </select>
+                        <app-button variant="ghost" size="sm" (clicked)="askRemove(user)">Remove</app-button>
+                      </div>
+                    } @else {
+                      <span class="muted">{{ isSelf(user) ? 'You' : 'Owner only' }}</span>
+                    }
+                  </td>
                 </tr>
               }
             </tbody>
@@ -185,6 +207,20 @@ export interface UserDto {
           </app-button>
         </div>
       </app-modal>
+
+      <app-modal
+        [isOpen]="!!removeTarget()"
+        title="Remove team member"
+        (close)="removeTarget.set(null)"
+      >
+        <p class="confirm-text">
+          Remove {{ removeTarget()?.name }} ({{ removeTarget()?.email }})? They lose access immediately. This cannot be undone.
+        </p>
+        <div footer class="modal-actions">
+          <app-button variant="ghost" size="sm" (clicked)="removeTarget.set(null)">Cancel</app-button>
+          <app-button variant="danger" size="sm" [loading]="removing()" (clicked)="confirmRemove()">Remove member</app-button>
+        </div>
+      </app-modal>
     </div>
   `,
   styles: [`
@@ -236,7 +272,7 @@ export interface UserDto {
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-lg);
       box-shadow: var(--shadow-sm);
-      overflow: hidden;
+      overflow-x: auto;
     }
 
     .team-table {
@@ -265,6 +301,61 @@ export interface UserDto {
 
     .team-table tr:last-child td {
       border-bottom: none;
+    }
+
+    @media (max-width: 640px) {
+      .team-table th:nth-child(3),
+      .team-table td:nth-child(3),
+      .team-table th:nth-child(4),
+      .team-table td:nth-child(4) {
+        display: none;
+      }
+      .team-table th,
+      .team-table td {
+        padding: 0.75rem;
+      }
+      .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.75rem;
+      }
+      .row-actions {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .team-table .avatar {
+        display: none;
+      }
+      .info .email {
+        overflow-wrap: anywhere;
+      }
+      .role-select {
+        min-width: 96px;
+      }
+    }
+
+    .row-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .role-select {
+      width: auto;
+      min-width: 110px;
+      padding: 0.375rem 0.5rem;
+    }
+
+    .muted {
+      color: var(--text-muted);
+      font-size: 0.8125rem;
+    }
+
+    .confirm-text {
+      font-size: 0.9375rem;
+      color: var(--text-main);
+      line-height: 1.5;
     }
 
     .user-cell {
@@ -399,6 +490,11 @@ export interface UserDto {
 })
 export class TeamFeatureComponent implements OnInit {
   private readonly http = inject(HttpClient);
+  private readonly auth = inject(AuthService);
+
+  readonly busyUserId = signal<number | null>(null);
+  readonly removeTarget = signal<UserDto | null>(null);
+  readonly removing = signal<boolean>(false);
 
   readonly users = signal<UserDto[]>([]);
   readonly loading = signal<boolean>(false);
@@ -490,6 +586,71 @@ export class TeamFeatureComponent implements OnInit {
         this.submitting.set(false);
         const msg = err.error?.message || err.error?.errors?.email?.[0] || 'Failed to create team member.';
         this.formError.set(msg);
+      }
+    });
+  }
+
+  isSelf(user: UserDto): boolean {
+    return this.auth.currentUser()?.id === user.id;
+  }
+
+  private actorIsOwner(): boolean {
+    return this.auth.hasRole('Owner');
+  }
+
+  assignableRoles(): string[] {
+    const roles = ['Admin', 'Analyst', 'Viewer'];
+    return this.actorIsOwner() ? ['Owner', ...roles] : roles;
+  }
+
+  /** Mirrors the server rules: no self changes; only an Owner may change or remove an Owner. */
+  canManage(user: UserDto): boolean {
+    if (this.isSelf(user)) return false;
+    if (this.getUserRole(user) === 'Owner' && !this.actorIsOwner()) return false;
+    return true;
+  }
+
+  private showResult(message: string, type: 'success' | 'error'): void {
+    this.feedbackMessage.set(message);
+    this.feedbackType.set(type);
+  }
+
+  changeRole(user: UserDto, role: string): void {
+    if (role === this.getUserRole(user)) return;
+    this.busyUserId.set(user.id);
+    this.http.put<{ success: boolean }>(`/api/v1/users/${user.id}/role`, { role }).subscribe({
+      next: () => {
+        this.busyUserId.set(null);
+        this.showResult(`${user.name} is now ${role}.`, 'success');
+        this.loadUsers();
+      },
+      error: (err) => {
+        this.busyUserId.set(null);
+        this.showResult(err.error?.error?.message || err.error?.message || 'Failed to change the role.', 'error');
+        this.loadUsers();
+      }
+    });
+  }
+
+  askRemove(user: UserDto): void {
+    this.removeTarget.set(user);
+  }
+
+  confirmRemove(): void {
+    const user = this.removeTarget();
+    if (!user) return;
+    this.removing.set(true);
+    this.http.delete<{ success: boolean }>(`/api/v1/users/${user.id}`).subscribe({
+      next: () => {
+        this.removing.set(false);
+        this.removeTarget.set(null);
+        this.showResult(`${user.name} was removed.`, 'success');
+        this.loadUsers();
+      },
+      error: (err) => {
+        this.removing.set(false);
+        this.removeTarget.set(null);
+        this.showResult(err.error?.error?.message || err.error?.message || 'Failed to remove the member.', 'error');
       }
     });
   }
