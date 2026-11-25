@@ -146,5 +146,21 @@ describe('TeamFeatureComponent', () => {
       expect(component.removeTarget()).toBeNull();
       expect(component.feedbackType()).toBe('success');
     });
+
+    it('shows the server message and reloads when a removal is refused', () => {
+      actAs(1, 'Admin');
+      fixture.detectChanges();
+      httpMock.expectOne('/api/v1/users').flush({ success: true, data: [mk(3, 'Viewer')] });
+      component.askRemove(mk(3, 'Viewer'));
+      component.confirmRemove();
+      httpMock.expectOne('/api/v1/users/3').flush(
+        { success: false, error: { message: 'Only an Owner can remove an Owner.' } },
+        { status: 403, statusText: 'Forbidden' },
+      );
+      httpMock.expectOne('/api/v1/users').flush({ success: true, data: [mk(3, 'Owner')] });
+      expect(component.feedbackType()).toBe('error');
+      expect(component.feedbackMessage()).toContain('Only an Owner');
+      expect(component.removeTarget()).toBeNull();
+    });
   });
 });

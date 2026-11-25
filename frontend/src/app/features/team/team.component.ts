@@ -651,6 +651,7 @@ export class TeamFeatureComponent implements OnInit {
         this.removing.set(false);
         this.removeTarget.set(null);
         this.showResult(err.error?.error?.message || err.error?.message || 'Failed to remove the member.', 'error');
+        this.loadUsers();
       }
     });
   }
