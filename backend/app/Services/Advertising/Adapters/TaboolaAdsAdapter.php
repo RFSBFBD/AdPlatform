@@ -98,6 +98,61 @@ class TaboolaAdsAdapter implements AdvertisingProviderInterface
         return ['endpoint' => $path, 'raw' => [$j], 'metrics' => $metrics];
     }
 
+    /**
+     * Campaign/day rows from the documented campaign_day_breakdown dimension of the Campaign Summary Report.
+     * Experimental and fixture tested only: not wired into scheduled sync and never run against a live account.
+     * Every row must carry a campaign id, a date and all required metrics; a duplicate campaign/day pair, a currency
+     * mismatch or any malformed row refuses the whole result (no partial import).
+     */
+    public function fetchCampaignDayInsights(ConnectedAdAccount $account, string $startDate, string $endDate): array
+    {
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $startDate) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $endDate) || $startDate > $endDate) {
+            throw new RuntimeException('Invalid Taboola reporting range.');
+        }
+        if ($endDate > now()->toDateString()) {
+            throw new RuntimeException('Taboola reporting range ends in the future.');
+        }
+        if ($account->token_expires_at && $account->token_expires_at->isPast()) {
+            $t = $this->issueToken();
+            $account->update(['access_token' => $t['access_token'], 'token_expires_at' => $t['expires_at']]);
+        }
+        $path = '/'.rawurlencode($account->external_account_id).'/reports/campaign-summary/dimensions/campaign_day_breakdown';
+        $j = $this->get($account->access_token, $path, ['start_date' => $startDate, 'end_date' => $endDate]);
+        $metrics = [];
+        $seen = [];
+        foreach ($j['results'] as $r) {
+            if (!is_array($r) || !isset($r['campaign']) || !is_scalar($r['campaign']) || trim((string) $r['campaign']) === '') {
+                throw new RuntimeException('Taboola campaign/day row lacks a campaign id; no partial result imported.');
+            }
+            if (!isset($r['date'], $r['spent'], $r['clicks'], $r['impressions'], $r['cpa_actions_num'], $r['conversions_value'])
+                || !preg_match('/^\d{4}-\d{2}-\d{2}/', (string) $r['date'])) {
+                throw new RuntimeException('Taboola campaign/day row lacks required metrics; no partial result imported.');
+            }
+            $date = substr((string) $r['date'], 0, 10);
+            if ($date < $startDate || $date > $endDate) {
+                throw new RuntimeException('Taboola campaign/day row is outside the requested range; no partial result imported.');
+            }
+            if (isset($r['currency']) && $r['currency'] !== $account->currency) {
+                throw new RuntimeException('Taboola report currency differs from account currency.');
+            }
+            $key = (string) $r['campaign'].'|'.$date;
+            if (isset($seen[$key])) {
+                throw new RuntimeException('Taboola campaign/day report repeats a campaign and date; no partial result imported.');
+            }
+            $seen[$key] = true;
+            $metrics[] = ['external_campaign_id' => (string) $r['campaign'], 'external_ad_set_id' => null, 'external_ad_id' => null,
+                'campaign_name' => $r['campaign_name'] ?? null,
+                'date' => $date, 'spend' => \App\Services\Advertising\MetricOperand::read($r, 'spent'),
+                'impressions' => \App\Services\Advertising\MetricOperand::read($r, 'impressions', true),
+                'clicks' => \App\Services\Advertising\MetricOperand::read($r, 'clicks', true),
+                'conversions' => \App\Services\Advertising\MetricOperand::read($r, 'cpa_actions_num'),
+                'conversion_value' => \App\Services\Advertising\MetricOperand::read($r, 'conversions_value'),
+                'metric_availability' => ['conversions' => true, 'conversion_value' => true],
+                'reporting_caveat' => 'Clicks may change for 48 hours and conversions for 30 days. A zero conversions_value is not proof that no value was recorded.'];
+        }
+        return ['endpoint' => $path, 'raw' => [$j], 'metrics' => $metrics];
+    }
+
     private function get(string $token, string $path, array $params = []): array
     {
         $r = Http::withToken($token)->timeout(30)->connectTimeout(10)->get(self::BASE.'/api/1.0'.$path, $params);
