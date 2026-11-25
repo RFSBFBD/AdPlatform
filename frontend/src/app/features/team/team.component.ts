@@ -155,7 +155,6 @@ export interface UserDto {
             <label class="form-label" for="userRole">Platform Role</label>
             <select id="userRole" class="form-input" [(ngModel)]="newUserRole">
               <option value="Admin">Admin (Full Management & Settings)</option>
-              <option value="Media Buyer">Media Buyer (Campaigns & Sync)</option>
               <option value="Analyst">Analyst (Analytics & Reports)</option>
               <option value="Viewer">Viewer (Read-Only Analytics)</option>
             </select>

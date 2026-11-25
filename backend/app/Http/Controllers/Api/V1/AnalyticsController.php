@@ -224,13 +224,26 @@ class AnalyticsController extends Controller
             $query->where('performance_metrics.connected_ad_account_id', $validated['account_id']);
         }
 
+        // All Channels excludes Snapchat: its only implemented source is spend-only and unverified, so mixing it
+        // into cross-provider totals would be wrong, and it must not block the other providers.
+        $excludeSnapchat = empty($validated['provider']) && empty($validated['account_id']);
+        $snapchatExcluded = false;
+        if ($excludeSnapchat) {
+            $query->where('performance_metrics.provider', '!=', 'snapchat');
+            $snapchatExcluded = PerformanceMetric::query()
+                ->whereIn('connected_ad_account_id', $userAccountIds)
+                ->where('provider', 'snapchat')
+                ->whereBetween('date', [$startDate, $endDate])
+                ->exists();
+        }
+
         if (!empty($validated['currency'])) {
             $query->whereHas('connectedAdAccount', function ($q) use ($validated) {
                 $q->where('currency', strtoupper($validated['currency']));
             });
         }
 
-        if($problem=(new \App\Services\Analytics\MetaDefinitionTransitionGuard)->userProblem($request->user()->id,$startDate,$endDate,$validated['provider']??null,$validated['account_id']??null,false,false))return response()->json(['success'=>false,'message'=>$problem],409);
+        if($problem=(new \App\Services\Analytics\MetaDefinitionTransitionGuard)->userProblem($request->user()->id,$startDate,$endDate,$validated['provider']??null,$validated['account_id']??null,false,false,$excludeSnapchat))return response()->json(['success'=>false,'message'=>$problem],409);
         // 1. Currency Breakdown (DATA-001)
         $currencyBreakdown = (clone $query)
             ->join('connected_ad_accounts', 'performance_metrics.connected_ad_account_id', '=', 'connected_ad_accounts.id')
@@ -336,6 +349,10 @@ class AnalyticsController extends Controller
             'conversion_metadata' => $conversionResult['conversion_metadata'],
             'platforms' => $platformBreakdown,
             'timeline' => $timeline,
+            'excluded_providers' => $snapchatExcluded ? [[
+                'provider' => 'snapchat',
+                'reason' => 'Snapchat is not included in All Channels totals: the implemented source supports spend only and is unverified. Select Snapchat to view its stored spend separately.',
+            ]] : [],
         ]);
     }
 
@@ -372,6 +389,11 @@ class AnalyticsController extends Controller
             $query->where('provider', $validated['provider']);
         }
 
+        $excludeSnapchat = empty($validated['provider']);
+        if ($excludeSnapchat) {
+            $query->where('provider', '!=', 'snapchat');
+        }
+
         if (!empty($validated['status'])) {
             $query->where('status', $validated['status']);
         }
@@ -384,7 +406,7 @@ class AnalyticsController extends Controller
             });
         }
 
-        if($problem=(new \App\Services\Analytics\MetaDefinitionTransitionGuard)->userProblem($request->user()->id,$startDate,$endDate,$validated['provider']??null,null,true))return response()->json(['success'=>false,'message'=>$problem],409);
+        if($problem=(new \App\Services\Analytics\MetaDefinitionTransitionGuard)->userProblem($request->user()->id,$startDate,$endDate,$validated['provider']??null,null,true,true,$excludeSnapchat))return response()->json(['success'=>false,'message'=>$problem],409);
         $paginator = $query->paginate($perPage);
 
         // Fetch metrics rows per campaign in the specified date range for currency-aware aggregation

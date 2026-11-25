@@ -83,11 +83,12 @@ class AiManager
 
         // Custom / OpenAI-compatible endpoint (Groq, OpenRouter, Mistral, Ollama, DeepSeek, etc.)
         $baseUrl = rtrim($config->metadata['base_url'] ?? '', '/');
+        $custom = ! empty($baseUrl);
         if (empty($baseUrl)) {
             $baseUrl = 'https://api.openai.com/v1';
         }
 
-        $res = Http::withToken($config->api_key)->timeout(10)->get("{$baseUrl}/models");
+        $res = $this->pinned($baseUrl, $custom)->withToken($config->api_key)->timeout(10)->get("{$baseUrl}/models");
         if ($res->failed()) {
             throw new RuntimeException("The model API rejected the connection (HTTP {$res->status()}). Check the API key and endpoint URL.");
         }
@@ -184,10 +185,11 @@ class AiManager
                     $content = json_decode($clean, true) ?: [];
                 } else {
                     $baseUrl = rtrim($config->metadata['base_url'] ?? '', '/');
+                    $custom = ! empty($baseUrl);
                     if (empty($baseUrl)) {
                         $baseUrl = 'https://api.openai.com/v1';
                     }
-                    $response = Http::withToken($config->api_key)->timeout(30)->post("{$baseUrl}/chat/completions", [
+                    $response = $this->pinned($baseUrl, $custom)->withToken($config->api_key)->timeout(30)->post("{$baseUrl}/chat/completions", [
                         'model' => $config->model ?: 'custom-model',
                         'messages' => [
                             ['role' => 'system', 'content' => $systemPrompt],
@@ -267,5 +269,27 @@ class AiManager
         }
 
         return $config;
+    }
+
+    /**
+     * User-supplied endpoints must be public https hosts. The resolved IP is pinned for the
+     * request and redirects are off, so the check cannot be bypassed after validation.
+     * The built-in OpenAI default is a constant and is not user-supplied.
+     */
+    private function pinned(string $baseUrl, bool $custom): \Illuminate\Http\Client\PendingRequest
+    {
+        if (! $custom) {
+            return Http::withoutRedirecting(); // built-in constant OpenAI URL, not user-supplied
+        }
+
+        try {
+            $t = \App\Support\OutboundUrlGuard::assertPublicHttps($baseUrl);
+        } catch (\InvalidArgumentException $e) {
+            throw new RuntimeException('The saved endpoint URL is not allowed: ' . $e->getMessage());
+        }
+
+        return Http::withoutRedirecting()->withOptions([
+            'curl' => [CURLOPT_RESOLVE => ["{$t['host']}:443:{$t['ip']}"]],
+        ]);
     }
 }

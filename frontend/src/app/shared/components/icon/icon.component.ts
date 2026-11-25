@@ -44,7 +44,7 @@ import { CommonModule } from '@angular/common';
       }
 
       @else if (['amazon','microsoft','linkedin','spotify','reddit','pinterest','taboola','apple','outbrain'].includes(name)) {
-        <span aria-hidden="true" style="font-size:13px;font-weight:800;line-height:1">{{ name.slice(0,2).toUpperCase() }}</span>
+        <span aria-hidden="true" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:4px;background:#e2e8f0;color:#334155;font-size:8px;font-weight:700;line-height:1;letter-spacing:0">{{ name.slice(0,2).toUpperCase() }}</span>
       }
 
       @else if (name === 'looker') {

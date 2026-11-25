@@ -27,7 +27,7 @@ export interface OrSuggestionItem {
 }
 
 export interface PlatformItem {
-  provider: 'meta' | 'google' | 'tiktok' | 'snapchat';
+  provider: string;
   spend: number;
   impressions: number;
   clicks: number;
@@ -66,41 +66,17 @@ export interface TimelineItem {
             >
               All Channels
             </button>
-            <button
-              type="button"
-              class="filter-btn"
-              [class.active]="selectedPlatform() === 'meta'"
-              (click)="setPlatform('meta')"
-            >
-              <app-icon name="meta" [size]="15"></app-icon>
-              <span>Meta</span>
-            </button>
-            <button
-              type="button"
-              class="filter-btn"
-              [class.active]="selectedPlatform() === 'google'"
-              (click)="setPlatform('google')"
-            >
-              <app-icon name="google" [size]="15"></app-icon>
-              <span>Google</span>
-            </button>
-            <button
-              type="button"
-              class="filter-btn"
-              [class.active]="selectedPlatform() === 'tiktok'"
-              (click)="setPlatform('tiktok')"
-            >
-              <app-icon name="tiktok" [size]="15"></app-icon>
-              <span>TikTok</span>
-            </button>
-            <button
-              type="button"
-              class="filter-btn"
-              [class.active]="selectedPlatform() === 'snapchat'"
-              (click)="setPlatform('snapchat')"
-            >
-              <span>Snapchat</span>
-            </button>
+            @for (p of platformOptions; track p.id) {
+              <button
+                type="button"
+                class="filter-btn"
+                [class.active]="selectedPlatform() === p.id"
+                (click)="setPlatform(p.id)"
+              >
+                <app-icon [name]="p.id" [size]="15"></app-icon>
+                <span>{{ p.label }}</span>
+              </button>
+            }
           </div>
 
           <!-- Date Range Filter -->
@@ -133,6 +109,7 @@ export interface TimelineItem {
         </div>
       </div>
 
+      @if (!loadError()) {
       @if (outcomeReason()) { <div role="status" class="outcome-boundary" style="padding:16px;margin-bottom:16px;border:1px solid #f59e0b;border-radius:12px;background:#fffbeb;color:#92400e">{{ outcomeReason() }} Spend and delivery event totals remain separate. They are not unique people. Joint provider-outcome budget optimization is unavailable without comparable source evidence.</div> }
       @if(nativeEvidence();as evidence){
         <section class="native-evidence" aria-label="Exact native-currency recorded operands">
@@ -168,6 +145,7 @@ export interface TimelineItem {
           [subtext]="summary().roas === null ? 'Outcome definitions are not comparable in this scope' : 'Provider-attributed value / spend, not verified sales'"
         />
       </div>
+      }
 
       <!-- Smart Decision Engine Cards -->
       @if (summary().spend > 0) {
@@ -210,10 +188,19 @@ export interface TimelineItem {
         }
       </div>
 
+      @if (excludedNote() && !loadError()) {
+        <div class="state-note" role="note" data-testid="excluded-note">{{ excludedNote() }}</div>
+      }
+
       @if (isLoading()) {
         <div class="loading-state">
           <span class="spinner"></span>
           <span>Aggregating cross-channel advertising analytics...</span>
+        </div>
+      } @else if (loadError()) {
+        <div class="state-error" role="alert" data-testid="overview-error">
+          <strong>Analytics could not be shown.</strong>
+          <span>{{ loadError() }}</span>
         </div>
       } @else if (summary().spend === 0 && platforms().length === 0) {
         <app-empty-state
@@ -427,6 +414,8 @@ export interface TimelineItem {
 
     .btn-group {
       display: inline-flex;
+      flex-wrap: wrap;
+      max-width: 100%;
       background-color: var(--bg-surface);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-md);
@@ -435,6 +424,10 @@ export interface TimelineItem {
     }
 
     .filter-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      white-space: nowrap;
       padding: 0.4rem 0.75rem;
       font-size: 0.8125rem;
       font-weight: 500;
@@ -696,6 +689,7 @@ export interface TimelineItem {
       transition: width 0.3s ease;
     }
 
+    .progress-bar-fill { background: linear-gradient(90deg, #475569, #94a3b8); }
     .progress-bar-fill.meta { background: linear-gradient(90deg, #1877f2, #0062e0); }
     .progress-bar-fill.google { background: linear-gradient(90deg, #ea4335, #fbbc05); }
     .progress-bar-fill.tiktok { background: linear-gradient(90deg, #000000, #25f4ee); }
@@ -715,10 +709,14 @@ export interface TimelineItem {
       color: #fff;
     }
 
+    .platform-badge { background-color: #475569; color: #fff; }
     .platform-badge.meta { background-color: #1877f2; }
     .platform-badge.google { background-color: #ea4335; }
     .platform-badge.tiktok { background-color: #000000; }
 
+    .state-error, .state-note { display:flex; flex-direction:column; gap:4px; padding:12px 16px; border-radius:8px; margin-bottom:12px; font-size:0.875rem; }
+    .state-error { background:#fef2f2; border:1px solid #fecaca; color:#991b1b; }
+    .state-note { background:#f1f5f9; border:1px solid #cbd5e1; color:#334155; }
     .loading-state {
       padding: 3rem;
       display: flex;
@@ -810,6 +808,8 @@ export class DashboardFeatureComponent implements OnInit {
   private readonly http = inject(HttpClient);
 
   readonly isLoading = signal<boolean>(false);
+  readonly loadError = signal<string | null>(null);
+  readonly excludedNote = signal<string | null>(null);
   readonly orSuggestions = signal<OrSuggestionItem[]>([]);
   readonly selectedPlatform = signal<string>('');
   readonly dateRangePreset = signal<'7d' | '30d' | '90d'>('30d');
@@ -857,6 +857,13 @@ export class DashboardFeatureComponent implements OnInit {
     });
   }
 
+  readonly platformOptions: ReadonlyArray<{ id: string; label: string }> = [
+    { id: 'meta', label: 'Meta' }, { id: 'google', label: 'Google' }, { id: 'tiktok', label: 'TikTok' },
+    { id: 'snapchat', label: 'Snapchat' }, { id: 'taboola', label: 'Taboola' }, { id: 'pinterest', label: 'Pinterest' },
+    { id: 'reddit', label: 'Reddit' }, { id: 'spotify', label: 'Spotify' }, { id: 'linkedin', label: 'LinkedIn' },
+    { id: 'microsoft', label: 'Microsoft' }, { id: 'amazon', label: 'Amazon' },
+  ];
+
   setPlatform(platform: string): void {
     this.selectedPlatform.set(platform);
     this.fetchOverview();
@@ -869,7 +876,7 @@ export class DashboardFeatureComponent implements OnInit {
 
   fetchOverview(): void {
     const requestId=++this.overviewRequest;
-    this.isLoading.set(true);this.nativeEvidence.set(null);
+    this.isLoading.set(true);this.nativeEvidence.set(null);this.loadError.set(null);this.excludedNote.set(null);
 
     const days = this.dateRangePreset() === '7d' ? 7 : (this.dateRangePreset() === '90d' ? 90 : 30);
     const end = new Date().toISOString().split('T')[0];
@@ -889,6 +896,7 @@ export class DashboardFeatureComponent implements OnInit {
       reporting_currency?: string;
       outcome_semantics?: {reason?:string|null};
       recorded_native_evidence?:any;
+      excluded_providers?: {provider:string;reason:string}[];
     }>(url).subscribe({
       next: (res) => {
         if(requestId!==this.overviewRequest)return;
@@ -896,15 +904,20 @@ export class DashboardFeatureComponent implements OnInit {
         if (res.summary) {
           this.nativeEvidence.set(res.recorded_native_evidence??null);
           this.outcomeReason.set(res.outcome_semantics?.reason || null);
+          this.excludedNote.set(res.excluded_providers?.[0]?.reason ?? null);
           this.summary.set(res.summary);
           this.platforms.set(res.platforms || []);
           this.timeline.set(res.timeline || []);
           this.reportingCurrency.set(res.reporting_currency || res.summary.primary_currency || 'USD');
         }
       },
-      error: () => {
+      error: (err) => {
         if(requestId!==this.overviewRequest)return;
         this.isLoading.set(false);
+        // Never show zeros as if they were data: clear stale numbers and show the server's reason.
+        this.loadError.set(err?.error?.message || err?.error?.error?.message || 'The server could not return analytics for this selection. Try again or pick a single platform.');
+        this.platforms.set([]);this.timeline.set([]);this.outcomeReason.set(null);
+        this.summary.set({spend:0,impressions:0,clicks:0,conversions:0,conversion_value:0,cpc:0,cpm:0,ctr:0,roas:0} as OverviewSummary);
       }
     });
   }

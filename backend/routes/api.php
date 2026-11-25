@@ -150,16 +150,16 @@ Route::prefix('v1')->group(function () {
 
         // Business profile (per-user inputs for scenarios; never shared across users)
         Route::get('/business-profile', [\App\Http\Controllers\Api\V1\BusinessProfileController::class, 'show']);
-        Route::put('/business-profile', [\App\Http\Controllers\Api\V1\BusinessProfileController::class, 'update']);
+        Route::put('/business-profile', [\App\Http\Controllers\Api\V1\BusinessProfileController::class, 'update'])->middleware('permission:manage-accounts');
 
         // AI model connection (BYOK & custom models). The configured model has one bounded job:
         // it ORDERS the deterministic OR suggestions and attaches fixed server-written notes.
         // No free-text generation endpoints exist by design.
         Route::prefix('ai')->group(function () {
             Route::get('/config', [\App\Http\Controllers\Api\V1\AiController::class, 'getConfig']);
-            Route::put('/config/{provider}', [\App\Http\Controllers\Api\V1\AiController::class, 'updateConfig']);
-            Route::delete('/config/{provider}', [\App\Http\Controllers\Api\V1\AiController::class, 'deleteConfig']);
-            Route::post('/config/{provider}/test', [\App\Http\Controllers\Api\V1\AiController::class, 'testConnection']);
+            Route::put('/config/{provider}', [\App\Http\Controllers\Api\V1\AiController::class, 'updateConfig'])->middleware('permission:manage-ai');
+            Route::delete('/config/{provider}', [\App\Http\Controllers\Api\V1\AiController::class, 'deleteConfig'])->middleware('permission:manage-ai');
+            Route::post('/config/{provider}/test', [\App\Http\Controllers\Api\V1\AiController::class, 'testConnection'])->middleware('permission:manage-ai');
         });
 
         // Looker Studio BI Community Connector Endpoint

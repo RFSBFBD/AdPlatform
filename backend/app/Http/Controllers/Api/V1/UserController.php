@@ -11,6 +11,26 @@ use Spatie\Permission\Models\Role;
 
 class UserController extends Controller
 {
+
+    private function ownerDenied(string $message): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'error' => ['code' => 'OWNER_PROTECTED', 'message' => $message],
+        ], 403);
+    }
+
+    /** Only an Owner may create, promote, demote or remove an Owner; the last Owner can never be removed. */
+    private function isOwner(User $u): bool
+    {
+        return $u->hasRole('Owner');
+    }
+
+    private function ownerCount(): int
+    {
+        return User::role('Owner')->count();
+    }
+
     /**
      * List users with roles.
      */
@@ -43,6 +63,10 @@ class UserController extends Controller
             'password' => 'required|string|min:8',
             'role' => 'required|string|exists:roles,name',
         ]);
+
+        if ($request->role === 'Owner' && ! $this->isOwner($request->user())) {
+            return $this->ownerDenied('Only an Owner can create another Owner.');
+        }
 
         $user = User::create([
             'name' => $request->name,
@@ -94,6 +118,14 @@ class UserController extends Controller
             ], 403);
         }
 
+        $actorIsOwner = $this->isOwner($request->user());
+        if (($request->role === 'Owner' || $this->isOwner($targetUser)) && ! $actorIsOwner) {
+            return $this->ownerDenied('Only an Owner can assign or change the Owner role.');
+        }
+        if ($this->isOwner($targetUser) && $request->role !== 'Owner' && $this->ownerCount() <= 1) {
+            return $this->ownerDenied('The last Owner cannot be demoted.');
+        }
+
         $oldRole = $targetUser->getRoleNames()->first();
         $targetUser->syncRoles([$request->role]);
 
@@ -128,6 +160,15 @@ class UserController extends Controller
                     'message' => 'You cannot delete your own account.',
                 ],
             ], 403);
+        }
+
+        if ($this->isOwner($targetUser)) {
+            if (! $this->isOwner($request->user())) {
+                return $this->ownerDenied('Only an Owner can remove an Owner.');
+            }
+            if ($this->ownerCount() <= 1) {
+                return $this->ownerDenied('The last Owner cannot be removed.');
+            }
         }
 
         AuditLog::log('user.deleted', $request->user()->id, 'User', (string)$targetUser->id, [

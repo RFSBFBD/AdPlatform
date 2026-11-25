@@ -46,6 +46,18 @@ class AiController extends Controller
 
         $user = $request->user();
 
+        if (! empty($validated['base_url'])) {
+            try {
+                \App\Support\OutboundUrlGuard::assertPublicHttps($validated['base_url']);
+            } catch (\InvalidArgumentException $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                    'error' => ['code' => 'AI_BASE_URL_NOT_ALLOWED', 'message' => $e->getMessage()],
+                ], 422);
+            }
+        }
+
         $config = AiConfig::firstOrNew([
             'user_id' => $user->id,
             'provider' => strtolower($provider),

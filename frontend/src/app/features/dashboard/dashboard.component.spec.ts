@@ -23,4 +23,15 @@ describe('dashboard outcome estimands',()=>{
   expect(c.summary().spend).toBe(1);expect(c.nativeValue(c.nativeGroups()[0].value,'spend')).toBe('9007199254740993.123456789');expect(c.nativeValue(c.nativeGroups()[0].value,'conversion_value')).toBe('unknown');http.verify();
  });
 
+ it('shows the server reason on a 409 instead of zeros, and the Snapchat exclusion note on success',()=>{
+  const f=setup();const c=f.componentInstance;const http=TestBed.inject(HttpTestingController);
+  c.summary.set({spend:99} as any);
+  c.fetchOverview();http.expectOne(r=>r.url.includes('/overview')).flush({success:false,message:'Reason from server'},{status:409,statusText:'Conflict'});
+  expect(c.loadError()).toBe('Reason from server');expect(c.platforms()).toEqual([]);
+  c.fetchOverview();http.expectOne(r=>r.url.includes('/overview')).flush({summary:{spend:1},platforms:[],timeline:[],excluded_providers:[{provider:'snapchat',reason:'Snapchat excluded note'}]});
+  expect(c.loadError()).toBeNull();expect(c.excludedNote()).toBe('Snapchat excluded note');http.verify();
+ });
+ it('offers all 11 providers in the platform filter',()=>{
+  const f=setup();expect(f.componentInstance.platformOptions.length).toBeGreaterThanOrEqual(11);
+ });
 });

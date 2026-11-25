@@ -26,10 +26,12 @@ class AiTest extends TestCase
         // Tests must never reach a real provider: any request without an explicit fake fails.
         Http::preventStrayRequests();
 
+        $this->seed(\Database\Seeders\RoleAndPermissionSeeder::class);
         $this->user = User::firstOrCreate(
             ['email' => 'ai_tester@example.com'],
             ['name' => 'AI Tester', 'password' => bcrypt('password123'), 'status' => 'active']
         );
+        $this->user->assignRole('Admin'); // AI config writes need manage-ai
     }
 
     public function test_unauthenticated_requests_are_rejected(): void

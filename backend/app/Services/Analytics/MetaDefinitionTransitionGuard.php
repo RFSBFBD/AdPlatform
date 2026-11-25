@@ -12,8 +12,8 @@ final class MetaDefinitionTransitionGuard {
   if($unknown||($new&&count($definitions)!==1))return 'Legacy, missing or differing Meta outcome definitions cannot support this analysis. Narrow the history or verify and reimport it; no rows were repaired.';
   return $outcomes&&$semantics?(new OutcomeSemanticGuard)->problem($rows):null;
  }
- public function userProblem(int $userId,string $start,string $end,?string $provider=null,?int $accountId=null,bool $separateAccounts=false,bool $semantics=true):?string{
-  $q=\App\Models\PerformanceMetric::whereIn('connected_ad_account_id',\App\Models\ConnectedAdAccount::where('user_id',$userId)->select('id'))->when($provider,fn($q)=>$q->where('provider',$provider))->whereBetween('date',[$start,$end]);
+ public function userProblem(int $userId,string $start,string $end,?string $provider=null,?int $accountId=null,bool $separateAccounts=false,bool $semantics=true,bool $excludeSnapchat=false):?string{
+  $q=\App\Models\PerformanceMetric::whereIn('connected_ad_account_id',\App\Models\ConnectedAdAccount::where('user_id',$userId)->select('id'))->when($provider,fn($q)=>$q->where('provider',$provider))->when($excludeSnapchat&&!$provider,fn($q)=>$q->where('provider','!=','snapchat'))->whereBetween('date',[$start,$end]);
   if($accountId)$q->where('connected_ad_account_id',$accountId);$rows=$q->limit(30001)->get(['provider','metadata','connected_ad_account_id']);
   if($rows->count()>30000)return 'Provider definition validation exceeds local30000-row cap.';
   if($separateAccounts){foreach($rows->groupBy('connected_ad_account_id')as$group)if($p=$this->problem($group,true,$semantics))return $p;return null;}

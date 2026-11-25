@@ -13,7 +13,12 @@ class BusinessProfileTest extends TestCase
 
     private function user(string $email): User
     {
-        return User::firstOrCreate(['email' => $email], ['name' => 'T', 'password' => bcrypt('password123'), 'status' => 'active']);
+        $this->seed(\Database\Seeders\RoleAndPermissionSeeder::class);
+        $u = User::firstOrCreate(['email' => $email], ['name' => 'T', 'password' => bcrypt('password123'), 'status' => 'active']);
+        if (! $u->hasRole('Admin')) {
+            $u->assignRole('Admin'); // business-profile writes now need manage-accounts
+        }
+        return $u;
     }
 
     public function test_requires_authentication(): void

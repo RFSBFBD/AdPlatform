@@ -12,7 +12,7 @@ export interface CampaignListItem {
   id: number;
   external_campaign_id: string;
   name: string;
-  provider: 'meta' | 'google' | 'tiktok' | 'snapchat';
+  provider: string;
   status: string;
   objective: string | null;
   daily_budget: number | null;
@@ -41,7 +41,7 @@ export interface CampaignListItem {
       <div class="page-header">
         <div>
           <h2 class="title">Campaigns</h2>
-          <p class="subtitle">Multi-platform advertising campaigns across Meta, Google, TikTok and Snapchat Ads.</p>
+          <p class="subtitle">Advertising campaigns across the 11 platforms the filter supports. X, Apple, Outbrain and Walmart are not available here.</p>
         </div>
       </div>
 
@@ -65,6 +65,14 @@ export interface CampaignListItem {
             <option value="meta">Meta Ads</option>
             <option value="google">Google Ads</option>
             <option value="tiktok">TikTok Ads</option>
+            <option value="snapchat">Snapchat Ads</option>
+            <option value="taboola">Taboola</option>
+            <option value="pinterest">Pinterest Ads</option>
+            <option value="reddit">Reddit Ads</option>
+            <option value="spotify">Spotify Ads</option>
+            <option value="linkedin">LinkedIn Ads</option>
+            <option value="microsoft">Microsoft Ads</option>
+            <option value="amazon">Amazon Ads</option>
           </select>
 
           <!-- Status Filter -->
@@ -75,6 +83,10 @@ export interface CampaignListItem {
           </select>
         </div>
       </div>
+
+      @if (!selectedProvider) {
+        <p class="state-note-inline">All Platforms excludes Snapchat. Its source is spend-only and unverified, so Snapchat campaigns are not available for analysis here.</p>
+      }
 
       <!-- Campaign List Table -->
       @if (isLoading()) {
@@ -131,6 +143,11 @@ export interface CampaignListItem {
               }
             </tbody>
           </table>
+        </div>
+      } @else if (loadError()) {
+        <div class="state-error" role="alert" data-testid="campaigns-error">
+          <strong>Campaigns could not be loaded.</strong>
+          <span>{{ loadError() }}</span>
         </div>
       } @else {
         <app-empty-state
@@ -279,7 +296,7 @@ export interface CampaignListItem {
       font-size: 0.875rem;
 
       th {
-        padding: 0.75rem 1rem;
+        padding: 0.75rem 0.6rem;
         background: var(--bg-surface-hover);
         border-bottom: 1px solid var(--border-color);
         color: var(--text-muted);
@@ -288,7 +305,7 @@ export interface CampaignListItem {
       }
 
       td {
-        padding: 0.875rem 1rem;
+        padding: 0.875rem 0.6rem;
         border-bottom: 1px solid var(--border-color);
         color: var(--text-main);
       }
@@ -316,6 +333,12 @@ export interface CampaignListItem {
     }
 
     .platform-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      white-space: nowrap;
+      background-color: #475569;
+      color: #fff;
       font-size: 0.6875rem;
       font-weight: 700;
       padding: 0.2rem 0.5rem;
@@ -341,6 +364,8 @@ export interface CampaignListItem {
       color: var(--success, #10b981);
     }
 
+    .state-error { display:flex; flex-direction:column; gap:4px; padding:12px 16px; border-radius:8px; background:#fef2f2; border:1px solid #fecaca; color:#991b1b; font-size:0.875rem; }
+    .state-note-inline { margin:0 0 12px; font-size:0.8125rem; color:#475569; }
     .loading-state {
       padding: 3rem;
       text-align: center;
@@ -400,6 +425,7 @@ export class CampaignsFeatureComponent implements OnInit {
 
   readonly campaigns = signal<CampaignListItem[]>([]);
   readonly isLoading = signal<boolean>(false);
+  readonly loadError = signal<string | null>(null);
   readonly selectedCampaign = signal<CampaignListItem | null>(null);
   readonly isModalOpen = signal<boolean>(false);
 
@@ -413,6 +439,7 @@ export class CampaignsFeatureComponent implements OnInit {
 
   loadCampaigns(): void {
     this.isLoading.set(true);
+    this.loadError.set(null);
 
     let url = `/api/v1/analytics/campaigns?per_page=50`;
     if (this.searchQuery.trim()) {
@@ -430,8 +457,10 @@ export class CampaignsFeatureComponent implements OnInit {
         this.isLoading.set(false);
         this.campaigns.set(res.data || []);
       },
-      error: () => {
+      error: (err) => {
         this.isLoading.set(false);
+        this.campaigns.set([]);
+        this.loadError.set(err?.error?.message || err?.error?.error?.message || 'The server could not return campaigns for this selection.');
       }
     });
   }
