@@ -58,3 +58,33 @@ export function formatRecordedTotals(p: Pick<CoveragePlatform,'recorded_arithmet
     note:r.arithmetic==='unavailable_original_source_integrity'?'Current original source is unavailable or failed revalidation. Legacy values are not substituted.':r.arithmetic==='exact_over_original_reported_delivery_operands'?'Original delivery tokens, returned campaign/date rows only. Not complete inventory or final billing. Canonical outcome value unavailable.':'Exact stored operands, original source precision not verified. Provider-reported outcome value is not verified sales.'
   }));
 }
+
+export function elapsedSince(iso:string,now:number):string {
+ const t=Date.parse(iso);
+ if(!Number.isFinite(t))return 'unknown';
+ const sec=Math.floor((now-t)/1000);
+ if(sec<0)return 'timestamp is in the future (clock mismatch)';
+ if(sec<60)return 'less than 1 minute';
+ const min=Math.floor(sec/60);
+ if(min<60)return min+(min===1?' minute':' minutes');
+ const h=Math.floor(min/60);
+ if(h<48)return h+(h===1?' hour':' hours');
+ const d=Math.floor(h/24);
+ return d+' days';
+}
+export interface FreshnessRow { provider:string; label:string; account:string; state:'synced'|'no_completed_audit'; text:string; note:string; }
+/** Spec section 65: last successful sync per connected account. No delay threshold is invented: age is shown, not judged. */
+export function freshnessRows(c:CoverageResponse|null|undefined,now:number):FreshnessRow[] {
+ const out:FreshnessRow[]=[];
+ for(const p of c?.platforms??[]){
+  if(p.status==='not_connected')continue;
+  for(const a of p.accounts??[]){
+   const at=a.sync_provenance?.last_successful_sync_at??null;
+   const label=PROVIDER_LABEL[p.provider]??p.provider;
+   const name=a.name||('Account #'+a.id);
+   if(at){out.push({provider:p.provider,label,account:name,state:'synced',text:'Last successful sync '+elapsedSince(at,now)+' ago',note:'Provider-side reporting may lag or change after this time.'});}
+   else{out.push({provider:p.provider,label,account:name,state:'no_completed_audit',text:'No completed sync recorded',note:'Stored rows, if any, are not proof of a provider pull.'});}
+  }
+ }
+ return out;
+}
