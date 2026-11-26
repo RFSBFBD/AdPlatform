@@ -21,6 +21,33 @@ export interface OverviewSummary {
   cpa: number | null;
 }
 
+export interface DqCheck { id: string; status: string; detail: string; }
+export interface DqChannel { score: number; level: string; checks: DqCheck[]; rubric_version: string; }
+export interface DqBlock {
+  window?: { start: string; end: string; days: number };
+  channels: Record<string, DqChannel> | DqChannel[];
+  portfolio: { score: number | null; level: string; optimize_allowed: boolean; threshold: number; gate_reason: string | null };
+  note?: string;
+}
+export interface DqView { portfolioLine: string; gate: string | null; note: string; channels: { provider: string; line: string; issues: string[] }[]; }
+/** Shows the server's rubric output as returned. No score, level or threshold is computed or invented here. */
+export function dqView(b: DqBlock | null | undefined): DqView | null {
+  if (!b || !b.portfolio) return null;
+  const p = b.portfolio;
+  const ch = Array.isArray(b.channels) ? {} : (b.channels ?? {});
+  const channels = Object.entries(ch).map(([provider, c]) => ({
+    provider,
+    line: 'Score ' + c.score + '/100 (' + c.level + ')',
+    issues: (c.checks ?? []).filter(k => k.status !== 'pass').map(k => k.detail),
+  }));
+  return {
+    portfolioLine: p.score === null ? 'No quality score: no channel data in the window' : 'Portfolio score ' + p.score + '/100 (' + p.level + ')',
+    gate: p.optimize_allowed ? null : (p.gate_reason ?? 'Optimization is not allowed by the quality gate.'),
+    note: b.note ?? 'Engineering rubric, not a calibrated statistical measure.',
+    channels,
+  };
+}
+
 export interface OrSuggestionItem {
   title: string;
   severity: string;
@@ -145,6 +172,11 @@ export interface TimelineItem {
           [value]="summary().roas === null ? 'Withheld' : summary().roas + 'x'"
           [subtext]="summary().roas === null ? 'Outcome definitions are not comparable in this scope' : 'Provider-attributed value / spend, not verified sales'"
         />
+        <app-stat-card
+          title="Blended CPA"
+          [value]="cpaValue()"
+          [subtext]="cpaSubtext()"
+        />
       </div>
       }
 
@@ -200,6 +232,22 @@ export interface TimelineItem {
         </section>
       } @else if (freshnessError()) {
         <div class="state-note" role="note" data-testid="freshness-error">{{ freshnessError() }}</div>
+      }
+
+      @if (dq(); as q) {
+        <section class="quality-card" aria-label="Data quality" data-testid="data-quality">
+          <h3>Data quality</h3>
+          <p class="dq-line"><strong>{{ q.portfolioLine }}</strong></p>
+          @if (q.gate) { <p role="status" class="dq-gate" data-testid="dq-gate">{{ q.gate }}</p> }
+          <ul>
+            @for (c of q.channels; track c.provider) {
+              <li><strong>{{ c.provider }}</strong>: {{ c.line }}@for (i of c.issues; track i) { <br><span class="freshness-note">{{ i }}</span> }</li>
+            }
+          </ul>
+          <p class="freshness-note">{{ q.note }}</p>
+        </section>
+      } @else if (dqError()) {
+        <div class="state-note" role="note" data-testid="dq-error">{{ dqError() }}</div>
       }
 
       @if (excludedNote() && !loadError()) {
@@ -734,6 +782,12 @@ export interface TimelineItem {
     .freshness h3 { margin:0 0 8px; font-size:0.95rem; }
     .freshness ul { margin:0; padding-left:18px; display:flex; flex-direction:column; gap:4px; overflow-wrap:anywhere; }
     .freshness-note { color:#64748b; }
+    .quality-card { padding:12px 16px; border:1px solid #cbd5e1; border-radius:8px; margin-bottom:12px; font-size:0.875rem; background:#f8fafc; color:#334155; }
+    .quality-card h3 { margin:0 0 8px; font-size:0.95rem; }
+    .quality-card ul { margin:0 0 8px; padding-left:18px; display:flex; flex-direction:column; gap:6px; overflow-wrap:anywhere; }
+    .quality-card .dq-line { margin:0 0 6px; }
+    .quality-card .dq-gate { margin:0 0 8px; padding:8px 12px; border:1px solid #f59e0b; background:#fffbeb; border-radius:8px; color:#92400e; }
+    .quality-card .freshness-note { color:#64748b; margin:0; }
     .state-note { background:#f1f5f9; border:1px solid #cbd5e1; color:#334155; }
     .loading-state {
       padding: 3rem;
@@ -864,6 +918,7 @@ export class DashboardFeatureComponent implements OnInit {
     this.fetchOverview();
     this.fetchOrSuggestions();
     this.fetchFreshness();
+    this.fetchQuality();
   }
 
   readonly freshness = signal<FreshnessRow[]>([]);
@@ -879,6 +934,30 @@ export class DashboardFeatureComponent implements OnInit {
         this.freshness.set([]);
         this.freshnessError.set('Data freshness is unavailable right now. It is unknown, not confirmed current.');
       },
+    });
+  }
+
+  /** CPA is the server value (spend / provider-reported conversions). Withheld or undefined is shown as such, never as 0. */
+  cpaValue(): string {
+    const c = this.summary().cpa;
+    if (c === null || c === undefined) { return this.outcomeReason() ? 'Withheld' : 'Not defined'; }
+    return c + ' ' + this.reportingCurrency();
+  }
+  cpaSubtext(): string {
+    const c = this.summary().cpa;
+    if (c === null || c === undefined) {
+      return this.outcomeReason() ? 'Outcome definitions are not comparable in this scope' : 'No provider-reported conversions in this window, so cost per conversion is undefined';
+    }
+    return 'Approximate converted spend / provider-reported conversions, not verified sales';
+  }
+
+  readonly dq = signal<DqView | null>(null);
+  readonly dqError = signal<string | null>(null);
+
+  fetchQuality(): void {
+    this.http.get<{ success: boolean; data: DqBlock }>('/api/v1/analytics/data-quality').subscribe({
+      next: (res) => { this.dqError.set(null); this.dq.set(dqView(res?.data)); if (!this.dq()) this.dqError.set('Data quality is unavailable. It is unknown, not confirmed good.'); },
+      error: () => { this.dq.set(null); this.dqError.set('Data quality is unavailable. It is unknown, not confirmed good.'); },
     });
   }
 
