@@ -1,5 +1,11 @@
 # Production apply notes
 
+## Verified deployed state, 26 November 2026
+
+Production is the Vercel deployment of main at e7f9d04, served at https://ad-platform-alpha.vercel.app. The Vercel dashboard showed it as Ready, Production, Current, built from RFSBFBD/AdPlatform main. Sign-in, the Dashboard and the Team & Access page were opened read-only. This release changed the frontend only: no backend code, no database migration. Its content is the Team role change and removal controls plus the Dashboard data freshness card. The deployed JavaScript contains both features.
+
+Not verified live: the role change and Remove controls (the production account has one member, so they do not render, and removal is not exercised because previews and production share one database), and the freshness card with data (no provider account is connected, so the card is hidden by design). Both were checked only against a throwaway database and fixtures before release. Preview deployments share the production database. Backups, monitoring, scheduled sync and every provider connection were not inspected.
+
 ## Historical deployment notes, not current-state evidence
 
 The earlier deployment description has not been revalidated. This checkpoint did not inspect or change any hosted environment, build a Docker image, verify hosted login/database routing, enable scheduled sync or connect a live provider. Do not infer any current site availability or architecture from this file. The checked-in Vercel/container configuration is a deployment candidate, not a verified deployment.
