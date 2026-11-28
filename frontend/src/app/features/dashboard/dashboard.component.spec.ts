@@ -92,4 +92,14 @@ describe('dashboard outcome estimands',()=>{
   c.outcomeReason.set(null);expect(c.cpaValue()).toBe('Not defined');expect(c.cpaSubtext()).toContain('undefined');
   c.summary.set({spend:10} as any);expect(c.cpaValue()).toBe('Not defined');
  });
+
+ it('never shows 0 CPA: zero conversions make CPA undefined even when the server returns 0',()=>{
+  const c=setup().componentInstance;
+  c.summary.set({spend:0,conversions:0,cpa:0} as any);
+  expect(c.cpaValue()).toBe('Not defined');expect(c.cpaValue()).not.toContain('0 USD');expect(c.cpaSubtext()).toContain('undefined');
+  c.summary.set({spend:25,conversions:0,cpa:0} as any);
+  expect(c.cpaValue()).toBe('Not defined');expect(c.cpaSubtext()).toContain('undefined');
+  c.summary.set({spend:25,conversions:5,cpa:5} as any);
+  expect(c.cpaValue()).toBe('5 USD');
+ });
 });

@@ -937,17 +937,21 @@ export class DashboardFeatureComponent implements OnInit {
     });
   }
 
-  /** CPA is the server value (spend / provider-reported conversions). Withheld or undefined is shown as such, never as 0. */
+  /** CPA is the server value (spend / provider-reported conversions). Withheld or undefined is shown as such, never as 0. With zero conversions CPA is undefined, even if the server returns 0. */
   cpaValue(): string {
-    const c = this.summary().cpa;
+    const s = this.summary();
+    const c = s.cpa;
     if (c === null || c === undefined) { return this.outcomeReason() ? 'Withheld' : 'Not defined'; }
+    if (!s.conversions) { return 'Not defined'; }
     return c + ' ' + this.reportingCurrency();
   }
   cpaSubtext(): string {
-    const c = this.summary().cpa;
+    const s = this.summary();
+    const c = s.cpa;
     if (c === null || c === undefined) {
       return this.outcomeReason() ? 'Outcome definitions are not comparable in this scope' : 'No provider-reported conversions in this window, so cost per conversion is undefined';
     }
+    if (!s.conversions) { return 'No provider-reported conversions in this window, so cost per conversion is undefined'; }
     return 'Approximate converted spend / provider-reported conversions, not verified sales';
   }
 
